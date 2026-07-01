@@ -1,0 +1,13 @@
+{
+  "name": "musicfree-web",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @musicfree/web dev",
+    "build": "pnpm --filter @musicfree/web build",
+    "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck"
+  }
+}
