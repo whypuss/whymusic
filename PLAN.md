@@ -1,11 +1,11 @@
-# MusicFree Web — A Lite MVP
+# MusicFree Web — Ultra Lite MVP
 
-> 目標：**裝插件 → 搜索 → 播放音樂**，5 天內跑起來
-> 不做工程潔癖，不做過早優化，只做能動的核心
+> 目標：**裝插件 → 搜索 → 播放音樂**，3 天內跑起來
+> 砍掉所有"結構糖"，只做能動的核心
 
 ---
 
-## 一、最小架構
+## 一、項目結構
 
 ```
 musicfree-web/
@@ -20,8 +20,6 @@ musicfree-web/
 │
 ├── web/
 │   ├── src/
-│   │   ├── pages/
-│   │   ├── components/
 │   │   ├── App.tsx
 │   │   └── main.tsx
 │   ├── index.html
@@ -33,29 +31,20 @@ musicfree-web/
 
 ---
 
-## 二、核心設計
+## 二、核心設計（極簡版）
 
-### 1. Plugin 系統（最重要）
+### 1. Plugin 系統
 
-**只做 4 件事：**
-
-- `search()`
-- `getMediaSource()`
-- `getLyric()`
-- `getArtistMusic()`
-
-**執行方式（簡化）：**
+**只做 2 件事：** `search()` + `getMediaSource()`
 
 ```typescript
 const pluginFn = new Function("module", "exports", pluginCode)
 const module = { exports: {} }
 pluginFn(module, module.exports)
-const plugin = module.exports
+return module.exports
 ```
 
 **❌ 不做：** sandbox、jsdom、webdav injection、白名單 API
-
-> 先跑起來再說安全
 
 ---
 
@@ -65,37 +54,38 @@ const plugin = module.exports
 class Player {
   audio = new Audio()
 
-  play(url: string) {
-    this.audio.src = url
-    this.audio.play()
-  }
-
-  pause() {
-    this.audio.pause()
-  }
+  play(url: string) { this.audio.src = url; this.audio.play() }
+  pause() { this.audio.pause() }
+  on(event, cb) { this.audio.addEventListener(event, cb) }
 }
 ```
 
-**❌ 不做：** WebAudio API、equalizer、rate system、complex state machine
+**❌ 不做：** Zustand store、WebAudio API、rate system
 
 ---
 
-### 3. 存儲（極簡）
+### 3. 狀態管理（零依賴）
 
-**只用 localStorage，存：**
+**不做 Zustand**，直接：
 
-- plugins（插件列表）
-- last song（最後一首）
-- playlist（簡單 array）
+```typescript
+// Player 實例 + event emitter
+const player = new Player()
+player.on('ended', () => { /* 通知 UI */ })
 
-**❌ 不做：** IndexedDB、LRU cache、media cache system
+// UI 直接 subscribe
+player.on('play', () => setPlaying(true))
+player.on('pause', () => setPlaying(false))
+```
 
 ---
 
 ### 4. Search（最簡模式）
 
+**不單獨做 SearchManager**，UI 層自己 loop：
+
 ```typescript
-async function searchAllPlugins(keyword: string) {
+async function searchAll(keyword) {
   const plugins = getEnabledPlugins()
   const results = await Promise.all(plugins.map(p => p.search(keyword)))
   return results.flat()
@@ -104,176 +94,141 @@ async function searchAllPlugins(keyword: string) {
 
 ---
 
-### 5. UI（最少頁面）
+### 5. Types（最少定義）
 
-**只要 3 個頁面：**
+```typescript
+interface MusicItem {
+  id: string
+  title: string
+  artist: string
+  artwork?: string
+  platform?: string
+}
+```
 
-| 頁面 | 內容 |
+**不做 platform abstraction**，先不要分層。
+
+---
+
+### 6. 存儲（極簡）
+
+**只用 localStorage：**
+
+- `plugins` — 已安裝插件列表
+- `enabledPlugins` — 啟用插件名
+
+**不做 IndexedDB**，不做 cache system。
+
+---
+
+## 三、MVP 功能清單
+
+| ✔ 必須有 | ❌ 不做 |
 |---|---|
-| **① Search** | input + results list + click play |
-| **② Player** | song info + play/pause + progress bar |
-| **③ Plugin** | install plugin (paste / file) + enable / disable |
+| 插件加載（new Function） | Zustand store |
+| 搜索 | SearchManager 層 |
+| 播放音樂 | 歌詞顯示 |
+| 播放控制（play/pause） | IndexedDB |
+| 插件開關 | 歌詞搜索 |
+| 插件安裝/卸載 | settings system |
+
+> **核心閉環：能搜 → 能播 → 能換插件**
 
 ---
 
-## 三、最小功能清單（MVP）
-
-### ✔ 必須有
-
-- [x] 插件加載（JS）
-- [x] 搜索
-- [x] 點擊播放
-- [x] 播放控制（play/pause）
-- [x] 插件開關
-
-### ❌ 不做
-
-- playlist manager（正式版才做）
-- lyric sync（先只顯示）
-- download
-- cache system
-- settings system
-- theme system
-- PWA
-- keyboard shortcuts
-
----
-
-## 四、開發順序
+## 四、開發順序（3 天）
 
 ### Day 1 — 插件能跑
 
 - [ ] **1.1** 初始化項目
   - [ ] Vite + React + TypeScript
-  - [ ] pnpm workspace（core / shared / web）
-  - [ ] 基礎文件結構
+  - [ ] 基礎目錄（core / shared / web）
+  - [ ] 一個能跑的空 React App
 
 - [ ] **1.2** shared/types.ts
-  - [ ] 定義 `IMusicItem`（id, platform, title, artist, artwork）
-  - [ ] 定義 `IPlugin`（platform, version, search, getMediaSource）
+  - [ ] `MusicItem`（id, title, artist, artwork）
+  - [ ] `Plugin`（name, version, search, getMediaSource）
 
 - [ ] **1.3** core/plugin/Plugin.ts
-  - [ ] `new Function()` 執行插件代碼
+  - [ ] `loadPlugin(code)` — `new Function()` 執行插件
   - [ ] 注入全局 API（axios, crypto-js, cheerio, he, qs, big-integer, nanoid）
-  - [ ] 測試：手動執行一個插件 JS，確認能返回 plugin 對象
 
 - [ ] **1.4** core/plugin/PluginManager.ts
-  - [ ] `loadPlugin(code)` — 加載插件代碼
-  - [ ] `getPlugin(name)` — 獲取插件
-  - [ ] `search(keyword)` — 調用所有插件的 search
-  - [ ] localStorage 存插件列表
+  - [ ] `loadPlugin(code)` — 加載並執行
+  - [ ] `getPlugins()` — 返回已加載插件列表
+  - [ ] `search(keyword)` — 調用所有插件 search
+  - [ ] `savePlugin(code, name)` — localStorage 存插件
+  - [ ] `loadSavedPlugins()` — 從 localStorage 恢復
 
-- [ ] **1.5** 驗證：手動 paste 一個插件 URL，能加載，能搜索
+- [ ] **1.5** 驗證
+  - [ ] 手動 paste 一個插件 URL → 能加載
+  - [ ] 調用 search → 能返回結果
 
 ---
 
-### Day 2 — 播放能跑
+### Day 2 — 播放能跑 + UI 列表
 
 - [ ] **2.1** core/player/Player.ts
-  - [ ] `play(url)` — 設置 audio.src + play
-  - [ ] `pause()`
-  - [ ] `onEnded` 事件（播放完畢通知）
+  - [ ] `play(url)` — audio.src + play
+  - [ ] `pause()` / `toggle()`
+  - [ ] `on(event, cb)` — event emitter 封裝
   - [ ] `currentTime` / `duration` getter
 
-- [ ] **2.2** core/player/PlayerStore.ts（Zustand）
-  - [ ] `currentSong` — 當前歌曲
-  - [ ] `isPlaying` — 播放狀態
-  - [ ] `progress` — 播放進度
-  - [ ] `play(song)` — 播放歌曲（調用 plugin.getMediaSource 獲取 URL）
-  - [ ] `pause()` / `togglePlay()`
+- [ ] **2.2** core/index.ts 統一導出
 
-- [ ] **2.3** core/index.ts 統一導出
-
-- [ ] **2.4** 驗證：手動傳一個音頻 URL，能播放
-
----
-
-### Day 3 — UI 能跑
-
-- [ ] **3.1** web/src/pages/Search.tsx
+- [ ] **2.3** web/src/App.tsx — 搜索頁
   - [ ] 搜索輸入框
-  - [ ] 搜索結果列表（歌曲名、作者、封面）
-  - [ ] 點擊歌曲 → 調用 `playerStore.play(song)`
-  - [ ] 顯示搜索中 loading
+  - [ ] 搜索結果列表（歌曲名 + 作者）
+  - [ ] 點擊 → 調用 `player.play(url)`（從 plugin.getMediaSource 獲取）
+  - [ ] 搜索 loading 狀態
 
-- [ ] **3.2** web/src/components/MusicBar.tsx（底部播放條）
-  - [ ] 顯示歌曲信息（封面、標題、作者）
+- [ ] **2.4** web/src/components/MusicBar.tsx — 底部播放條
+  - [ ] 顯示歌曲信息
   - [ ] 播放/暫停按鈕
-  - [ ] 進度條（可拖拽）
+  - [ ] 進度條（audio.currentTime / duration）
 
-- [ ] **3.3** web/src/App.tsx
-  - [ ] 路由配置（React Router DOM）
-  - [ ] Search 頁為首頁
-  - [ ] MusicBar 全局固定底部
-
-- [ ] **3.4** 驗證：搜索歌曲 → 點擊 → 底部播放條出現 → 能播放
+- [ ] **2.5** 驗證
+  - [ ] 搜索歌曲 → 點擊 → 底部播放條出現 → 能播放
 
 ---
 
-### Day 4 — 插件管理
+### Day 3 — 插件管理 + 整合
 
-- [ ] **4.1** web/src/pages/PluginManager.tsx
+- [ ] **3.1** web/src/pages/PluginManager.tsx
   - [ ] 顯示已安裝插件列表
-  - [ ] 啟用 / 禁用插件
-  - [ ] 從 URL 安裝插件（輸入框 + 加載）
-  - [ ] 從文件安裝插件（`<input type="file">`）
+  - [ ] 啟用 / 禁用
+  - [ ] 從 URL 安裝（input + button）
+  - [ ] 從文件安裝（`<input type="file">`）
 
-- [ ] **4.2** 整合 PluginManager 到 App
-  - [ ] 側邊欄導航（Search / Plugins）
-  - [ ] 插件狀態同步到搜索（啟用插件才顯示結果）
+- [ ] **3.2** App 整合
+  - [ ] 路由切換（Search / Plugins）
+  - [ ] 側邊欄導航
 
-- [ ] **4.3** 驗證：安裝插件 → 搜索 → 播放
-
----
-
-### Day 5 — 收尾
-
-- [ ] **5.1** Bug fix
-  - [ ] 插件加載失敗處理（try/catch）
-  - [ ] 搜索無結果處理（空狀態）
-  - [ ] 播放錯誤處理（音源失效）
-
-- [ ] **5.2** 歌詞顯示（最簡版）
-  - [ ] `getLyric()` 獲取歌詞文本
-  - [ ] Player 頁顯示歌詞（不滾動、不同步）
-
-- [ ] **5.3** Demo 驗證
-  - [ ] 安裝官方示例插件
-  - [ ] 搜索一首歌
-  - [ ] 播放
-  - [ ] 切歌
-  - [ ] 安裝/卸載插件
+- [ ] **3.3** 驗證
+  - [ ] 安裝插件 → 搜索 → 播放
+  - [ ] 啟用/禁用插件 → 搜索結果變化
 
 ---
 
-## 五、與原 PLAN 的差異
+## 五、與前版差異
 
-| 項目 | 原 PLAN | A Lite MVP |
+| 項目 | 前版 | Ultra Lite |
 |---|---|---|
-| core 模塊 | 6–8 個 | 2 個 |
-| phase | 17 個 | 5 個 |
-| storage | IndexedDB | localStorage |
-| player | WebAudio + 封裝 | HTML5 Audio |
-| plugin system | sandbox | direct eval |
-| playlist | full system | none |
-| 可跑性 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
-| 開發速度 | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| 狀態管理 | Zustand | Event Emitter |
+| Search | 單獨層 | UI 直接 loop |
+| Types | IMusicItem + IPlugin + ... | MusicItem + Plugin |
+| 歌詞 | Day 5 實現 | **不做了** |
+| 開發時間 | 5 天 | **3 天** |
 
 ---
 
-## 六、定位
+## 六、下一步
 
-> 原 PLAN 是「做產品」
-> 這個版本是「先讓它活起來」
-
----
-
-## 七、下一步
-
-> 直接幫你生成：
+> 不再生成模板，**直接寫代碼**：
 >
-> - 完整 monorepo 初始化模板
-> - plugin runtime（可直接跑 MusicFree 插件）
-> - 最小 React UI（可播放）
+> 1. 初始化項目
+> 2. 寫 plugin runtime（core/plugin/）
+> 3. 寫 audio player（core/player/）
+> 4. 寫搜索 UI（web/src/App.tsx）
 >
-> 做到：**clone 下來直接 `npm install` + `npm run dev` 就能播歌**
+> 做到：**`pnpm install && pnpm dev` 就能播歌**
