@@ -19,14 +19,14 @@ const OFFICIAL_PLUGINS = [
   { name: '歌词千寻', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/geciqianxun/index.js' },
 ]
 
-// Load plugins from localStorage
-const loadSavedPlugins = () => {
+// 加載插件（優先從 localStorage，沒有則自動安裝 Audiomack）
+const initPlugins = async () => {
   try {
     const saved = localStorage.getItem('musicfree-plugins')
     if (saved) {
       const data = JSON.parse(saved) as Array<{ name: string; code: string; enabled: boolean }>
       for (const p of data) {
-        if (p.name === 'Demo Plugin') continue // 不再加載 demo 插件
+        if (p.name === 'Demo Plugin') continue
         if (!pluginManager.getPlugin(p.name) && p.code) {
           pluginManager.loadPlugin(p.code, p.name)
           if (!p.enabled) {
@@ -36,11 +36,48 @@ const loadSavedPlugins = () => {
       }
     }
   } catch (e) {
-    console.error('Failed to load plugins:', e)
+    console.error('Failed to load plugins from localStorage:', e)
+  }
+
+  // 如果沒有 Audiomack，自動安裝
+  if (!pluginManager.getPlugin('Audiomack')) {
+    try {
+      const response = await fetch('https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/audiomack/index.js')
+      if (!response.ok) throw new Error('Failed to fetch')
+      const code = await response.text()
+      pluginManager.loadPlugin(code, 'Audiomack')
+      // 保存插件代碼到 localStorage
+      const pluginCodes: Record<string, string> = JSON.parse(localStorage.getItem('musicfree-plugin-codes') || '{}')
+      pluginCodes['Audiomack'] = code
+      localStorage.setItem('musicfree-plugin-codes', JSON.stringify(pluginCodes))
+      // 保存插件列表
+      localStorage.setItem('musicfree-plugins', JSON.stringify([{ name: 'Audiomack', code, enabled: true }]))
+      console.log('[Auto-init] Audiomack plugin installed and loaded')
+    } catch (e) {
+      console.error('Failed to auto-install Audiomack:', e)
+    }
   }
 }
 
-loadSavedPlugins()
+// 等待插件加載完成
+let pluginsLoaded = false
+initPlugins().then(() => {
+  pluginsLoaded = true
+  console.log('[Plugins] All plugins loaded')
+}).catch(e => {
+  console.error('[Plugins] Failed to load plugins:', e)
+})
+
+// 公開的等待方法
+const waitForPlugins = async (): Promise<boolean> => {
+  if (pluginsLoaded) return true
+  // 等待最多 10 秒
+  const start = Date.now()
+  while (!pluginsLoaded && Date.now() - start < 10000) {
+    await new Promise(r => setTimeout(r, 100))
+  }
+  return pluginsLoaded
+}
 
 export default function App() {
   const [keyword, setKeyword] = useState('')
@@ -94,6 +131,8 @@ export default function App() {
     setLoading(true)
     setResults([])
     try {
+      // 等待插件加載完成
+      await waitForPlugins()
       const allResults = await pluginManager.search(keyword.trim(), searchType)
       setResults(allResults)
     } catch (e) {
@@ -300,7 +339,9 @@ export default function App() {
               <div className="space-y-2 max-w-2xl mx-auto">
                 {results.length === 0 && !loading && (
                   <div className="text-center text-gray-500 py-8">
-                    未找到結果。請先在「商店」安裝插件。
+                    {pluginManager.getPlugins().length === 0 
+                      ? '請先在「商店」安裝插件。' 
+                      : '未找到結果。'}
                   </div>
                 )}
                 {results.map((item) => (

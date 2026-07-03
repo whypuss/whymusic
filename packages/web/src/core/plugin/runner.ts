@@ -30,6 +30,9 @@ const packages: Record<string, any> = {
     axiosFn.create = () => axiosFn
     axiosFn.defaults = { timeout: 2000 }
     axiosFn.interceptors = { response: { use: () => {} } }
+    // 關鍵：插件代碼用 const axios_1 = require("axios")，然後 axios_1.default.get(...)
+    // 所以 axiosFn 本身就要有 .default 屬性，且 .default 也必須有 .get/.post
+    axiosFn.default = axiosFn
     return axiosFn
   })(),
   cheerio: {
@@ -114,11 +117,18 @@ export class PluginRunner {
         instance: plugin, supportedMethods: new Set(Object.keys(plugin).filter((k: string) => typeof plugin[k] === 'function')),
         async search(query: string, page?: number, type?: SearchType) {
           if (!plugin.search) return { isEnd: true, data: [] as MusicItem[] }
+          console.log(`[PluginRunner] 搜索 ${plugin.name}: query=${query}, type=${type || 'music'}`)
           const result: any = await plugin.search(query, page || 1, type || 'music') ?? {}
+          console.log('[PluginRunner] 搜索結果:', result)
           if (Array.isArray(result.data)) {
             result.data.forEach((item: any) => resetMediaItem(item, plugin.platform))
             return { isEnd: result.isEnd ?? true, data: result.data }
           }
+          if (Array.isArray(result)) {
+            result.forEach((item: any) => resetMediaItem(item, plugin.platform))
+            return { isEnd: true, data: result }
+          }
+          console.warn('[PluginRunner] 未知格式:', result)
           return { isEnd: true, data: [] as MusicItem[] }
         },
         async getMediaSource(item: any, quality?: string) {
