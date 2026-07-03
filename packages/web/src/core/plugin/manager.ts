@@ -86,9 +86,13 @@ export class PluginManager {
       if (!this.enabled.has(p.name)) continue
       try {
         const result: any = await p.search(keyword, undefined, type)
+        let items: any[] = []
         if (result && Array.isArray(result.data)) {
-          allResults.push(...result.data)
+          items = result.data
+        } else if (Array.isArray(result)) {
+          items = result
         }
+        allResults.push(...items)
       } catch (err) {
         console.error(`插件 ${p.name} 搜索失敗:`, err)
       }

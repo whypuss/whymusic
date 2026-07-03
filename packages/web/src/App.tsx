@@ -26,6 +26,7 @@ const loadSavedPlugins = () => {
     if (saved) {
       const data = JSON.parse(saved) as Array<{ name: string; code: string; enabled: boolean }>
       for (const p of data) {
+        if (p.name === 'Demo Plugin') continue // 不再加載 demo 插件
         if (!pluginManager.getPlugin(p.name) && p.code) {
           pluginManager.loadPlugin(p.code, p.name)
           if (!p.enabled) {
