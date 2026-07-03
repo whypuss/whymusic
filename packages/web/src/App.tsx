@@ -42,7 +42,7 @@ const initPlugins = async () => {
   // 如果沒有 Audiomack，自動安裝
   if (!pluginManager.getPlugin('Audiomack')) {
     try {
-      const response = await fetch('https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/audiomack/index.js')
+      const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
       if (!response.ok) throw new Error('Failed to fetch')
       const code = await response.text()
       pluginManager.loadPlugin(code, 'Audiomack')
@@ -85,10 +85,11 @@ export default function App() {
   const [playingItem, setPlayingItem] = useState<MusicItem | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [pluginUrl, setPluginUrl] = useState('')
   const [pluginName, setPluginName] = useState('')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'store'>('search')
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
@@ -135,18 +136,26 @@ export default function App() {
     if (!keyword.trim()) return
     setLoading(true)
     setResults([])
+    setErrorMessage(null)
     try {
-      // 等待插件加載完成
       await waitForPlugins()
+      const plugins = pluginManager.getPlugins().filter(p => pluginToggles[p.name])
+      console.log('[Search] 插件列表:', plugins.map(p => p.name))
       const allResults = await pluginManager.search(keyword.trim(), searchType)
+      console.log('[Search] 結果數量:', allResults.length)
       setResults(allResults)
-    } catch (e) {
+      if (allResults.length === 0) {
+        setErrorMessage(`沒有找到關鍵字「${keyword.trim()}」的搜尋結果。插件已載入 ${plugins.length} 個。`)
+      }
+    } catch (e: any) {
+      const msg = `搜尋失敗: ${e.message || String(e)}`
       console.error('Search error:', e)
-      showNotification('搜索失敗', 'error')
+      setErrorMessage(msg)
+      showNotification(msg, 'error')
     } finally {
       setLoading(false)
     }
-  }, [keyword, searchType])
+  }, [keyword, searchType, pluginToggles])
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     setNotification({ message, type })
