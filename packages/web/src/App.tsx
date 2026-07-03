@@ -4,19 +4,19 @@ import { Player, PluginManager, MusicItem, SearchType } from './core'
 const player = new Player()
 const pluginManager = new PluginManager()
 const OFFICIAL_PLUGINS = [
-  { name: 'Audiomack', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/audiomack/index.js' },
-  { name: 'Bilibili', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/bilibili/index.js' },
-  { name: 'Kuaishou', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/kuaishou/index.js' },
-  { name: '猫耳FM', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/maoerfm/index.js' },
-  { name: 'Suno', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/suno/index.js' },
-  { name: 'Udio', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/udio/index.js' },
-  { name: '音悦台', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/yinyuetai/index.js' },
-  { name: 'YouTube', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/youtube/index.js' },
-  { name: 'Airsonic', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/airsonic/index.js' },
-  { name: 'Navidrome', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/navidrome/index.js' },
-  { name: 'WebDAV', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/webdav/index.js' },
-  { name: '歌词网', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/geciwang/index.js' },
-  { name: '歌词千寻', url: 'https://raw.githubusercontent.com/maotoumao/MusicFreePlugins/v0.1/dist/geciqianxun/index.js' },
+  { name: 'Audiomack', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js' },
+  { name: 'Bilibili', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/bilibili/index.js' },
+  { name: 'Kuaishou', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/kuaishou/index.js' },
+  { name: '猫耳FM', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/maoerfm/index.js' },
+  { name: 'Suno', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/suno/index.js' },
+  { name: 'Udio', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/udio/index.js' },
+  { name: '音悦台', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/yinyuetai/index.js' },
+  { name: 'YouTube', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/youtube/index.js' },
+  { name: 'Airsonic', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/airsonic/index.js' },
+  { name: 'Navidrome', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/navidrome/index.js' },
+  { name: 'WebDAV', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/webdav/index.js' },
+  { name: '歌词网', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciwang/index.js' },
+  { name: '歌词千寻', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciqianxun/index.js' },
 ]
 
 // 加載插件（優先從 localStorage，沒有則自動安裝 Audiomack）
@@ -99,12 +99,17 @@ export default function App() {
   const installedNames = useMemo(() => new Set(pluginManager.getPlugins().map(p => p.name)), [pluginKey])
 
   useEffect(() => {
-    const plugins = pluginManager.getPlugins()
-    const toggles: Record<string, boolean> = {}
-    for (const p of plugins) {
-      toggles[p.name] = pluginManager.isPluginEnabled(p.name)
+    const initializeState = async () => {
+      await waitForPlugins()
+      const plugins = pluginManager.getPlugins()
+      const toggles: Record<string, boolean> = {}
+      for (const p of plugins) {
+        toggles[p.name] = pluginManager.isPluginEnabled(p.name)
+      }
+      setPluginToggles(toggles)
+      setPluginKey(k => k + 1)
     }
-    setPluginToggles(toggles)
+    initializeState()
   }, [])
 
   useEffect(() => {
