@@ -20,36 +20,50 @@ const OFFICIAL_PLUGINS = [
 ]
 
 // 加載插件（強制使用 jsDeliver CDN）
+const OFFICIAL_PLUGIN_URLS: Record<string, string> = {
+  Audiomack: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js',
+}
+
 const initPlugins = async () => {
   // 1. 先從 localStorage 恢復插件代碼（優先使用已安裝的插件）
-  let fromLocalStorage = false
+  let anyValidPlugin = false
   try {
     const saved = localStorage.getItem('musicfree-plugins')
     if (saved) {
       const data = JSON.parse(saved) as Array<{ name: string; code?: string; enabled: boolean }>
       for (const p of data) {
-        if (p.name === 'Demo Plugin' || !p.code) continue
-        pluginManager.loadPlugin(p.code, p.name)
-        if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
+        if (p.name === 'Demo Plugin') continue
+        // 檢測 code 是否有效：至少 1KB 才算真實插件代碼（'CDN' 等殘留數據太短）
+        if (p.code && p.code.length > 1000) {
+          try {
+            pluginManager.loadPlugin(p.code, p.name)
+            if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
+            anyValidPlugin = true
+            console.log(`[Auto-init] Loaded ${p.name} from localStorage (${p.code.length} chars)`)
+          } catch (e) {
+            console.warn(`[Auto-init] ${p.name} 本地代碼無效，將從 CDN 重新安裝`, e)
+          }
+        } else {
+          console.warn(`[Auto-init] ${p.name} 本地代碼缺失/過短 (length=${(p.code || '').length})，將從 CDN 重新安裝`)
+        }
       }
-      fromLocalStorage = true
-      console.log('[Auto-init] Loaded plugins from localStorage')
+      console.log('[Auto-init] Checked localStorage')
     }
   } catch (e) {
     console.error('Failed to load plugins from localStorage:', e)
   }
 
-  // 2. 如果 localStorage 沒有插件，自動安裝 Audiomack
-  if (!fromLocalStorage) {
+  // 2. 如果 localStorage 沒有有效插件，自動安裝 Audiomack
+  if (!anyValidPlugin) {
     try {
       const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
       if (!response.ok) throw new Error('Failed to fetch')
       const code = await response.text()
       pluginManager.loadPlugin(code, 'Audiomack')
-      // 保存到 localStorage，讓刷新後能恢復
+      // 保存到 localStorage：code 存完整插件代碼，確保刷新後能恢復
       localStorage.setItem('musicfree-plugin-codes', JSON.stringify({ Audiomack: code }))
       localStorage.setItem('musicfree-plugins', JSON.stringify([
-        { name: 'Audiomack', code: 'CDN', enabled: true }
+        { name: 'Audiomack', code, enabled: true }   // ← 存完整 code，不是 'CDN'
       ]))
       console.log('[Auto-init] Installed Audiomack from CDN and saved to localStorage')
     } catch (e) {
