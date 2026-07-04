@@ -126,10 +126,20 @@ export default function App() {
     setResults([])
     setErrorMessage(null)
     try {
-      await waitForPlugins()
+      const loaded = await waitForPlugins()
+      if (!loaded) {
+        setErrorMessage('插件加載中，請稍後再試...')
+        setLoading(false)
+        return
+      }
       const allPlugins = pluginManager.getPlugins()
       const enabledPlugins = allPlugins.filter(p => pluginManager.isPluginEnabled(p.name))
       console.log('[Search] 插件列表:', enabledPlugins.map(p => p.name))
+      if (enabledPlugins.length === 0) {
+        setErrorMessage('沒有啟用的插件，請先安裝並啟用插件。')
+        setLoading(false)
+        return
+      }
       const allResults = await pluginManager.search(keyword.trim(), searchType)
       console.log('[Search] 結果數量:', allResults.length)
       setResults(allResults)
