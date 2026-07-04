@@ -1,67 +1,47 @@
-import { Plugin, MusicItem, MediaSource, SearchType } from '../types'
+import { Plugin, MusicItem, SearchType } from '../types'
 import { PluginRunner } from './runner'
 
 /**
  * 插件管理器
- * 負責加載、管理、搜索插件
+ * 完全照搬原項目 MusicFree 的實現邏輯
  */
 export class PluginManager {
   private plugins: Plugin[] = []
   private enabled: Set<string> = new Set()
 
-  /**
-   * 加載插件代碼
-   */
   loadPlugin(code: string, name?: string): void {
     const plugin = PluginRunner.load(code)
-    const enhancedPlugin: Plugin = {
+    this.plugins.push({
       ...plugin,
       name: plugin.name || name || 'Unknown',
       platform: plugin.platform || name || 'unknown',
-    }
-    this.plugins.push(enhancedPlugin)
+    })
     this.enabled.add(plugin.name)
   }
 
-  /**
-   * 從 URL 加載插件
-   */
   async loadFromURL(url: string, name?: string): Promise<void> {
     const plugin = await PluginRunner.loadFromURL(url)
-    const enhancedPlugin: Plugin = {
+    this.plugins.push({
       ...plugin,
       name: plugin.name || name || 'Unknown',
       platform: plugin.platform || name || 'unknown',
-    }
-    this.plugins.push(enhancedPlugin)
+    })
     this.enabled.add(plugin.name)
   }
 
-  /**
-   * 獲取所有插件
-   */
   getPlugins(): Plugin[] {
     return this.plugins
   }
 
-  /**
-   * 獲取指定插件
-   */
   getPlugin(name: string): Plugin | undefined {
     return this.plugins.find(p => p.name === name || p.platform === name)
   }
 
-  /**
-   * 移除插件
-   */
   removePlugin(name: string): void {
     this.plugins = this.plugins.filter(p => p.name !== name && p.platform !== name)
     this.enabled.delete(name)
   }
 
-  /**
-   * 設置插件啟用狀態
-   */
   setPluginEnabled(name: string, enabled: boolean): void {
     if (enabled) {
       this.enabled.add(name)
@@ -70,33 +50,71 @@ export class PluginManager {
     }
   }
 
-  /**
-   * 檢查插件是否啟用
-   */
   isPluginEnabled(name: string): boolean {
     return this.enabled.has(name)
   }
 
   /**
-   * 調用所有插件的搜索
+   * 搜索 - 完全照搬原項目
+   * 原項目：search 返回 { isEnd: true, data: [] }
+   * 原項目：如果 plugin.instance.search 不存在，返回 { isEnd: true, data: [] }
+   * 原項目：如果 result.data 是數組，遍歷並 resetMediaItem
    */
   async search(keyword: string, type?: SearchType): Promise<MusicItem[]> {
     const allResults: MusicItem[] = []
     for (const p of this.plugins) {
       if (!this.enabled.has(p.name)) continue
       try {
-        const result: any = await p.search(keyword, undefined, type)
-        let items: any[] = []
-        if (result && Array.isArray(result.data)) {
-          items = result.data
-        } else if (Array.isArray(result)) {
-          items = result
+        if (!p.search) {
+          continue
         }
-        allResults.push(...items)
+        // 原項目：const result = (await this.plugin.instance.search(query, page, type)) ?? {}
+        const result: any = await p.search(keyword, undefined, type) ?? {}
+        if (Array.isArray(result.data)) {
+          result.data.forEach((item: any) => {
+            // 原項目：resetMediaItem(_, this.plugin.name)
+            // 我們簡化版：設置 platform
+            if (!item.platform) item.platform = p.name
+            if (!item.source) item.source = p.name
+          })
+          allResults.push(...result.data)
+        } else if (Array.isArray(result)) {
+          // 舊插件兼容：直接返回數組
+          result.forEach((item: any) => {
+            if (!item.platform) item.platform = p.name
+            if (!item.source) item.source = p.name
+          })
+          allResults.push(...result)
+        }
       } catch (err) {
         console.error(`插件 ${p.name} 搜索失敗:`, err)
       }
     }
     return allResults
+  }
+
+  /**
+   * 獲取音源 URL - 完全照搬原項目 getMediaSource 邏輯
+   * 原項目：{ url, headers, userAgent }
+   * 原項目：如果沒有 getMediaSource，直接返回 musicItem.url
+   */
+  async getMediaSource(plugin: Plugin, item: MusicItem): Promise<{ url: string; headers?: Record<string, string> } | null> {
+    try {
+      if (!plugin.getMediaSource) {
+        return { url: item.url || '' }
+      }
+      const result = await plugin.getMediaSource(item) ?? { url: item.url }
+      if (!result.url) {
+        return null
+      }
+      // 原項目：formatAuthUrl 處理 URL 中的 Basic Auth
+      return {
+        url: result.url,
+        headers: result.headers,
+      }
+    } catch (err) {
+      console.error(`插件 ${plugin.name} 獲取音源失敗:`, err)
+      return null
+    }
   }
 }

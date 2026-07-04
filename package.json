@@ -9,5 +9,11 @@
     "dev": "pnpm --filter @musicfree/web dev",
     "build": "pnpm --filter @musicfree/web build",
     "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck"
+  },
+  "dependencies": {
+    "crypto-js": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/crypto-js": "^4.2.2"
   }
 }
