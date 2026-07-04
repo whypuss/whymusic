@@ -295,7 +295,7 @@ export default function App() {
   // 依賴 pluginKey 來觸發重渲染，確保商店按鈕狀態正確
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className="min-h-screen bg-gradient-to-br from-pink-900 to-purple-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {/* Notification */}
       {notification && (
         <div
@@ -367,14 +367,14 @@ export default function App() {
                       {playingItem?.id === item.id && isPlaying ? (
                         <span className="text-white font-bold text-xs">♪</span>
                       ) : (
-                        <span className="text-white font-bold">{item.title[0]}</span>
+                        <span className="text-white font-bold">{(item.title || '♪')[0]}</span>
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{item.title}</div>
-                      <div className="text-sm text-gray-400 truncate">{item.artist}</div>
+                      <div className="font-medium truncate">{item.title || '未知歌曲'}</div>
+                      <div className="text-sm text-gray-400 truncate">{item.artist || '未知藝術家'}</div>
                     </div>
-                    <div className="text-sm text-gray-500 flex-shrink-0">{item.platform}</div>
+                    <div className="text-sm text-gray-500 flex-shrink-0">{item.platform || '未知'}</div>
                   </div>
                 ))}
               </div>
