@@ -19,35 +19,31 @@ const OFFICIAL_PLUGINS = [
   { name: '歌词千寻', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciqianxun/index.js' },
 ]
 
-// 加載插件（強制使用 jsDelivr CDN，不依賴 localStorage 中的舊代碼）
+// 加載插件（強制使用 jsDeliver CDN，不依賴 localStorage 中的舊代碼）
 const initPlugins = async () => {
-  // 嘗試從 localStorage 加載（僅用於保留啟用狀態，不依賴舊代碼）
+  // 先從 CDN 加載插件（loadPlugin 會自動啟用）
+  try {
+    const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
+    if (!response.ok) throw new Error('Failed to fetch')
+    const code = await response.text()
+    pluginManager.loadPlugin(code, 'Audiomack')
+    console.log('[Auto-init] Audiomack plugin installed from jsDeliver CDN')
+  } catch (e) {
+    console.error('Failed to install Audiomack from jsDeliver:', e)
+  }
+
+  // 再從 localStorage 恢復啟用狀態（覆蓋 loadPlugin 的自動啟用）
   try {
     const saved = localStorage.getItem('musicfree-plugins')
     if (saved) {
       const data = JSON.parse(saved) as Array<{ name: string; enabled: boolean }>
       for (const p of data) {
         if (p.name === 'Demo Plugin') continue
-        if (!p.enabled) {
-          pluginManager.setPluginEnabled(p.name, false)
-        }
+        pluginManager.setPluginEnabled(p.name, p.enabled)
       }
     }
   } catch (e) {
     console.error('Failed to load plugin states from localStorage:', e)
-  }
-
-  // 強制從 jsDelivr 下載插件（不依賴 localStorage 中的舊代碼）
-  try {
-    const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
-    if (!response.ok) throw new Error('Failed to fetch')
-    const code = await response.text()
-    pluginManager.loadPlugin(code, 'Audiomack')
-    // 保存插件狀態
-    localStorage.setItem('musicfree-plugins', JSON.stringify([{ name: 'Audiomack', enabled: true }]))
-    console.log('[Auto-init] Audiomack plugin installed from jsDelivr CDN')
-  } catch (e) {
-    console.error('Failed to install Audiomack from jsDelivr:', e)
   }
 }
 
