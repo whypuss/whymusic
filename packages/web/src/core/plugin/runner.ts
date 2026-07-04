@@ -5,28 +5,40 @@ import CryptoJS from 'crypto-js'
 // 完全照搬原項目 src/core/pluginManager/plugin.ts 的 packages 對象
 
 const axios = (function() {
-  // CORS 代理：用 Cloudflare 的 corsproxy.io 避免第三方 API 的 CORS 攔截
-  const CORS_PROXY = 'https://api.allorigins.win/raw?url='
+  // MusicFree 插件在瀏覽器環境執行，直接使用 fetch
+  // 不需要 CORS 代理——插件的 API 請求本身就是跨域的，瀏覽器會自動帶 CORS 頭
+  // 如果 API 支持 CORS（如 api.audiomack.com），就能直接請求
   function axiosFn(config: any) {
     let url = config.url || config
-    // 對非自身域的請求加 CORS 代理
-    try {
-      const u = new URL(url, 'https://example.com')
-      if (!['localhost', '127.0.0.1', location.hostname].includes(u.hostname)) {
-        url = CORS_PROXY + encodeURIComponent(url)
+    // 支持 query 參數（plugins 常用 .get(..., { params: {...} })）
+    if (config.params) {
+      const params = new URLSearchParams()
+      for (const [k, v] of Object.entries(config.params)) {
+        if (v !== undefined && v !== null) params.set(k, String(v))
       }
-    } catch { /* 忽略 URL 解析錯誤 */ }
+      const separator = url.includes('?') ? '&' : '?'
+      url = url + separator + params.toString()
+    }
+    // GET 請求可以帶 data（某些插件這麼用）
+    let body: string | undefined
+    if (['POST', 'PUT', 'PATCH'].includes(config.method || 'GET') && config.data) {
+      body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data)
+    }
     return fetch(url, {
       method: config.method || 'GET',
       headers: {
-        'Content-Type': 'application/json',
         ...(config.headers || {}),
       },
-      body: config.data ? JSON.stringify(config.data) : undefined,
+      body,
     }).then(async (res) => {
       const headers: Record<string, string> = {}
       res.headers.forEach((v, k) => { headers[k] = v })
-      const data = config.responseType === 'json' ? await res.json() : await res.text()
+      let data: any
+      try {
+        data = await res.json()
+      } catch {
+        data = await res.text()
+      }
       return {
         status: res.status,
         statusText: res.statusText,
