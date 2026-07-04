@@ -5,10 +5,23 @@ import CryptoJS from 'crypto-js'
 // 完全照搬原項目 src/core/pluginManager/plugin.ts 的 packages 對象
 
 const axios = (function() {
+  // CORS 代理：用 Cloudflare 的 corsproxy.io 避免第三方 API 的 CORS 攔截
+  const CORS_PROXY = 'https://api.allorigins.win/raw?url='
   function axiosFn(config: any) {
-    return fetch(config.url || config, {
+    let url = config.url || config
+    // 對非自身域的請求加 CORS 代理
+    try {
+      const u = new URL(url, 'https://example.com')
+      if (!['localhost', '127.0.0.1', location.hostname].includes(u.hostname)) {
+        url = CORS_PROXY + encodeURIComponent(url)
+      }
+    } catch { /* 忽略 URL 解析錯誤 */ }
+    return fetch(url, {
       method: config.method || 'GET',
-      headers: config.headers,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.headers || {}),
+      },
       body: config.data ? JSON.stringify(config.data) : undefined,
     }).then(async (res) => {
       const headers: Record<string, string> = {}
