@@ -11,22 +11,24 @@ export class PluginManager {
 
   loadPlugin(code: string, name?: string): void {
     const plugin = PluginRunner.load(code)
-    this.plugins.push({
+    const enhancedPlugin: Plugin = {
       ...plugin,
       name: plugin.name || name || 'Unknown',
       platform: plugin.platform || name || 'unknown',
-    })
-    this.enabled.add(plugin.name)
+    }
+    this.plugins.push(enhancedPlugin)
+    this.enabled.add(enhancedPlugin.name)
   }
 
   async loadFromURL(url: string, name?: string): Promise<void> {
     const plugin = await PluginRunner.loadFromURL(url)
-    this.plugins.push({
+    const enhancedPlugin: Plugin = {
       ...plugin,
       name: plugin.name || name || 'Unknown',
       platform: plugin.platform || name || 'unknown',
-    })
-    this.enabled.add(plugin.name)
+    }
+    this.plugins.push(enhancedPlugin)
+    this.enabled.add(enhancedPlugin.name)
   }
 
   getPlugins(): Plugin[] {
@@ -69,17 +71,15 @@ export class PluginManager {
           continue
         }
         // 原項目：const result = (await this.plugin.instance.search(query, page, type)) ?? {}
-        const result: any = await p.search(keyword, undefined, type) ?? {}
+        // page 必須傳 1，不能傳 undefined（否則插件 API 參數錯誤）
+        const result: any = await p.search(keyword, 1, type) ?? {}
         if (Array.isArray(result.data)) {
           result.data.forEach((item: any) => {
-            // 原項目：resetMediaItem(_, this.plugin.name)
-            // 我們簡化版：設置 platform
             if (!item.platform) item.platform = p.name
             if (!item.source) item.source = p.name
           })
           allResults.push(...result.data)
         } else if (Array.isArray(result)) {
-          // 舊插件兼容：直接返回數組
           result.forEach((item: any) => {
             if (!item.platform) item.platform = p.name
             if (!item.source) item.source = p.name

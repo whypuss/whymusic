@@ -1,0 +1,2 @@
+name = "musicweb"
+pages_build_output_dir = "packages/web/dist"

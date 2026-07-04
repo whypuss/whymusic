@@ -19,43 +19,35 @@ const OFFICIAL_PLUGINS = [
   { name: '歌词千寻', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciqianxun/index.js' },
 ]
 
-// 加載插件（優先從 localStorage，沒有則自動安裝 Audiomack）
+// 加載插件（強制使用 jsDelivr CDN，不依賴 localStorage 中的舊代碼）
 const initPlugins = async () => {
+  // 嘗試從 localStorage 加載（僅用於保留啟用狀態，不依賴舊代碼）
   try {
     const saved = localStorage.getItem('musicfree-plugins')
     if (saved) {
-      const data = JSON.parse(saved) as Array<{ name: string; code: string; enabled: boolean }>
+      const data = JSON.parse(saved) as Array<{ name: string; enabled: boolean }>
       for (const p of data) {
         if (p.name === 'Demo Plugin') continue
-        if (!pluginManager.getPlugin(p.name) && p.code) {
-          pluginManager.loadPlugin(p.code, p.name)
-          if (!p.enabled) {
-            pluginManager.setPluginEnabled(p.name, false)
-          }
+        if (!p.enabled) {
+          pluginManager.setPluginEnabled(p.name, false)
         }
       }
     }
   } catch (e) {
-    console.error('Failed to load plugins from localStorage:', e)
+    console.error('Failed to load plugin states from localStorage:', e)
   }
 
-  // 如果沒有 Audiomack，自動安裝
-  if (!pluginManager.getPlugin('Audiomack')) {
-    try {
-      const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
-      if (!response.ok) throw new Error('Failed to fetch')
-      const code = await response.text()
-      pluginManager.loadPlugin(code, 'Audiomack')
-      // 保存插件代碼到 localStorage
-      const pluginCodes: Record<string, string> = JSON.parse(localStorage.getItem('musicfree-plugin-codes') || '{}')
-      pluginCodes['Audiomack'] = code
-      localStorage.setItem('musicfree-plugin-codes', JSON.stringify(pluginCodes))
-      // 保存插件列表
-      localStorage.setItem('musicfree-plugins', JSON.stringify([{ name: 'Audiomack', code, enabled: true }]))
-      console.log('[Auto-init] Audiomack plugin installed and loaded')
-    } catch (e) {
-      console.error('Failed to auto-install Audiomack:', e)
-    }
+  // 強制從 jsDelivr 下載插件（不依賴 localStorage 中的舊代碼）
+  try {
+    const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
+    if (!response.ok) throw new Error('Failed to fetch')
+    const code = await response.text()
+    pluginManager.loadPlugin(code, 'Audiomack')
+    // 保存插件狀態
+    localStorage.setItem('musicfree-plugins', JSON.stringify([{ name: 'Audiomack', enabled: true }]))
+    console.log('[Auto-init] Audiomack plugin installed from jsDelivr CDN')
+  } catch (e) {
+    console.error('Failed to install Audiomack from jsDelivr:', e)
   }
 }
 
@@ -139,13 +131,14 @@ export default function App() {
     setErrorMessage(null)
     try {
       await waitForPlugins()
-      const plugins = pluginManager.getPlugins().filter(p => pluginToggles[p.name])
-      console.log('[Search] 插件列表:', plugins.map(p => p.name))
+      const allPlugins = pluginManager.getPlugins()
+      const enabledPlugins = allPlugins.filter(p => pluginManager.isPluginEnabled(p.name))
+      console.log('[Search] 插件列表:', enabledPlugins.map(p => p.name))
       const allResults = await pluginManager.search(keyword.trim(), searchType)
       console.log('[Search] 結果數量:', allResults.length)
       setResults(allResults)
       if (allResults.length === 0) {
-        setErrorMessage(`沒有找到關鍵字「${keyword.trim()}」的搜尋結果。插件已載入 ${plugins.length} 個。`)
+        setErrorMessage(`沒有找到關鍵字「${keyword.trim()}」的搜尋結果。插件已載入 ${allPlugins.length} 個。`)
       }
     } catch (e: any) {
       const msg = `搜尋失敗: ${e.message || String(e)}`
@@ -155,7 +148,7 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [keyword, searchType, pluginToggles])
+  }, [keyword, searchType])
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     setNotification({ message, type })
