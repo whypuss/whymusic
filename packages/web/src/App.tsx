@@ -19,31 +19,42 @@ const OFFICIAL_PLUGINS = [
   { name: '歌词千寻', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciqianxun/index.js' },
 ]
 
-// 加載插件（強制使用 jsDeliver CDN，不依賴 localStorage 中的舊代碼）
+// 加載插件（強制使用 jsDeliver CDN）
 const initPlugins = async () => {
-  // 先從 CDN 加載插件（loadPlugin 會自動啟用）
-  try {
-    const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
-    if (!response.ok) throw new Error('Failed to fetch')
-    const code = await response.text()
-    pluginManager.loadPlugin(code, 'Audiomack')
-    console.log('[Auto-init] Audiomack plugin installed from jsDeliver CDN')
-  } catch (e) {
-    console.error('Failed to install Audiomack from jsDeliver:', e)
-  }
-
-  // 再從 localStorage 恢復啟用狀態（覆蓋 loadPlugin 的自動啟用）
+  // 1. 先從 localStorage 恢復插件代碼（優先使用已安裝的插件）
+  let fromLocalStorage = false
   try {
     const saved = localStorage.getItem('musicfree-plugins')
     if (saved) {
-      const data = JSON.parse(saved) as Array<{ name: string; enabled: boolean }>
+      const data = JSON.parse(saved) as Array<{ name: string; code?: string; enabled: boolean }>
       for (const p of data) {
-        if (p.name === 'Demo Plugin') continue
-        pluginManager.setPluginEnabled(p.name, p.enabled)
+        if (p.name === 'Demo Plugin' || !p.code) continue
+        pluginManager.loadPlugin(p.code, p.name)
+        if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
       }
+      fromLocalStorage = true
+      console.log('[Auto-init] Loaded plugins from localStorage')
     }
   } catch (e) {
-    console.error('Failed to load plugin states from localStorage:', e)
+    console.error('Failed to load plugins from localStorage:', e)
+  }
+
+  // 2. 如果 localStorage 沒有插件，自動安裝 Audiomack
+  if (!fromLocalStorage) {
+    try {
+      const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
+      if (!response.ok) throw new Error('Failed to fetch')
+      const code = await response.text()
+      pluginManager.loadPlugin(code, 'Audiomack')
+      // 保存到 localStorage，讓刷新後能恢復
+      localStorage.setItem('musicfree-plugin-codes', JSON.stringify({ Audiomack: code }))
+      localStorage.setItem('musicfree-plugins', JSON.stringify([
+        { name: 'Audiomack', code: 'CDN', enabled: true }
+      ]))
+      console.log('[Auto-init] Installed Audiomack from CDN and saved to localStorage')
+    } catch (e) {
+      console.error('Failed to install Audiomack from CDN:', e)
+    }
   }
 }
 
