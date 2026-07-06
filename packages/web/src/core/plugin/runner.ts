@@ -4,10 +4,9 @@ import CryptoJS from 'crypto-js'
 // ====== MusicFree 原生 packages polyfill ======
 // 完全照搬原項目 src/core/pluginManager/plugin.ts 的 packages 對象
 
+const CORS_PROXY = 'https://corsproxy.io/?'
+
 const axios = (function() {
-  // MusicFree 插件在瀏覽器環境執行，直接使用 fetch
-  // 不需要 CORS 代理——插件的 API 請求本身就是跨域的，瀏覽器會自動帶 CORS 頭
-  // 如果 API 支持 CORS（如 api.audiomack.com），就能直接請求
   function axiosFn(config: any) {
     let url = config.url || config
     // 支持 query 參數（plugins 常用 .get(..., { params: {...} })）
@@ -24,9 +23,15 @@ const axios = (function() {
     if (['POST', 'PUT', 'PATCH'].includes(config.method || 'GET') && config.data) {
       body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data)
     }
-    return fetch(url, {
+    // 自動添加 CORS 代理前綴（如果配置了代理）
+    let requestUrl = url
+    if (CORS_PROXY && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:')) {
+      requestUrl = CORS_PROXY + encodeURIComponent(url)
+    }
+    return fetch(requestUrl, {
       method: config.method || 'GET',
       headers: {
+        'Content-Type': 'application/json',
         ...(config.headers || {}),
       },
       body,
@@ -39,6 +44,9 @@ const axios = (function() {
       } catch {
         data = await res.text()
       }
+      if (!res.ok) {
+        console.error(`[axios] Request failed: ${requestUrl} (${res.status})`, data)
+      }
       return {
         status: res.status,
         statusText: res.statusText,
@@ -46,6 +54,9 @@ const axios = (function() {
         config,
         data,
       }
+    }).catch((err) => {
+      console.error(`[axios] Fetch error: ${url}`, err)
+      return { status: 0, statusText: 'Network Error', headers: {}, config, data: null }
     })
   }
   axiosFn.get = (url: string, config?: any) => axiosFn({ ...config, url, method: 'GET' })
@@ -152,6 +163,31 @@ function formatAuthUrl(url: string) {
 
 export class PluginRunner {
   static load(code: string): Plugin {
+    // CORS 代理：攔截所有 fetch 請求（插件可能用 fetch 而不是 axios）
+    const originalFetch = fetch
+    const proxiedFetch: typeof fetch = async (input, init) => {
+      let url: string
+      if (typeof input === 'string') {
+        url = input
+      } else if (input instanceof Request) {
+        url = input.url
+      } else {
+        url = String(input)
+      }
+      let requestUrl = url
+      if (CORS_PROXY && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:') && !url.startsWith('about:') && !url.startsWith('//')) {
+        // 檢測是否已經是代理 URL，避免雙重代理
+        if (!url.startsWith(CORS_PROXY) && !url.includes('corsproxy.io') && !url.includes('allorigins.win') && !url.includes('cors-anywhere')) {
+          requestUrl = CORS_PROXY + encodeURIComponent(url)
+        }
+      }
+      const proxyInput = requestUrl !== url ? requestUrl : input
+      const response = await originalFetch(proxyInput, init)
+      // 修復 CORS 代理後 headers 中 location 指向原始 URL 的問題
+      const newResponse = new Response(response.body, response)
+      return newResponse
+    }
+
     const sandbox = {
       module: { exports: {} },
       exports: {},
@@ -166,7 +202,7 @@ export class PluginRunner {
       setInterval,
       clearInterval,
       Promise,
-      fetch,
+      fetch: proxiedFetch,
       URL,
       btoa: (str: string) => btoa(str),
       atob: (str: string) => atob(str),
@@ -179,7 +215,10 @@ export class PluginRunner {
     const pluginFunc = new Function(...argNames, code)
     pluginFunc(...argValues)
 
-    const pluginDef = sandbox.module.exports || sandbox.exports
+    let pluginDef: any = sandbox.module.exports || sandbox.exports
+    if (pluginDef && pluginDef.default) {
+      pluginDef = pluginDef.default
+    }
     return pluginDef as Plugin
   }
 

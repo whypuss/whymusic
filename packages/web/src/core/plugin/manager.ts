@@ -36,7 +36,8 @@ export class PluginManager {
   }
 
   getPlugin(name: string): Plugin | undefined {
-    return this.plugins.find(p => p.name === name || p.platform === name)
+    // 大小寫不敏感匹配，修復平台名稱大小寫不匹配問題
+    return this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase() || p.platform.toLowerCase() === name.toLowerCase())
   }
 
   removePlugin(name: string): void {
@@ -64,15 +65,19 @@ export class PluginManager {
    */
   async search(keyword: string, type?: SearchType): Promise<MusicItem[]> {
     const allResults: MusicItem[] = []
+    console.log('[PluginManager.search] keyword:', keyword, 'type:', type, 'plugins:', this.plugins.length)
     for (const p of this.plugins) {
+      console.log('[PluginManager.search] plugin:', p.name, 'enabled:', this.enabled.has(p.name), 'hasSearch:', !!p.search)
       if (!this.enabled.has(p.name)) continue
       try {
         if (!p.search) {
+          console.log('[PluginManager.search] skip:', p.name, '- no search method')
           continue
         }
         // 原項目：const result = (await this.plugin.instance.search(query, page, type)) ?? {}
         // page 必須傳 1，不能傳 undefined（否則插件 API 參數錯誤）
         const result: any = await p.search(keyword, 1, type) ?? {}
+        console.log('[PluginManager.search] result:', result)
         if (Array.isArray(result.data)) {
           result.data.forEach((item: any) => {
             if (!item.platform) item.platform = p.name
@@ -90,6 +95,7 @@ export class PluginManager {
         console.error(`插件 ${p.name} 搜索失敗:`, err)
       }
     }
+    console.log('[PluginManager.search] total results:', allResults.length)
     return allResults
   }
 

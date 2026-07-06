@@ -20,11 +20,14 @@ const OFFICIAL_PLUGINS = [
 ]
 
 // 加載插件（強制使用 jsDeliver CDN）
-const OFFICIAL_PLUGIN_URLS: Record<string, string> = {
-  Audiomack: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js',
-}
+let pluginsInitialized = false
+let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
 
 const initPlugins = async () => {
+  // StrictMode guard：React 18 會執行兩次，防止重複初始化
+  if (pluginsInitialized) return
+  pluginsInitialized = true
+
   // 1. 先從 localStorage 恢復插件代碼（優先使用已安裝的插件）
   let anyValidPlugin = false
   try {
@@ -33,18 +36,29 @@ const initPlugins = async () => {
       const data = JSON.parse(saved) as Array<{ name: string; code?: string; enabled: boolean }>
       for (const p of data) {
         if (p.name === 'Demo Plugin') continue
-        // 檢測 code 是否有效：至少 1KB 才算真實插件代碼（'CDN' 等殘留數據太短）
-        if (p.code && p.code.length > 1000) {
+        // 修復雙層 JSON 編碼問題：code 可能被 JSON.stringify 了兩次
+        // 如果 code 以 " 開頭且以 " 結尾，說明是 JSON 字串，需要再 parse 一次
+        let code = p.code
+        if (code && code.startsWith('"') && code.endsWith('"') && code.length > 2) {
           try {
-            pluginManager.loadPlugin(p.code, p.name)
+            code = JSON.parse(code)
+            console.log(`[Auto-init] Fixed double-encoded code for ${p.name}`)
+          } catch (e) {
+            // 如果 parse 失敗，就用原始 code（可能還是有問題）
+          }
+        }
+        // 檢測 code 是否有效：至少 1KB 才算真實插件代碼（'CDN' 等殘留數據太短）
+        if (code && code.length > 1000) {
+          try {
+            pluginManager.loadPlugin(code, p.name)
             if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
             anyValidPlugin = true
-            console.log(`[Auto-init] Loaded ${p.name} from localStorage (${p.code.length} chars)`)
+            console.log(`[Auto-init] Loaded ${p.name} from localStorage (${code.length} chars)`)
           } catch (e) {
             console.warn(`[Auto-init] ${p.name} 本地代碼無效，將從 CDN 重新安裝`, e)
           }
         } else {
-          console.warn(`[Auto-init] ${p.name} 本地代碼缺失/過短 (length=${(p.code || '').length})，將從 CDN 重新安裝`)
+          console.warn(`[Auto-init] ${p.name} 本地代碼缺失/過短 (length=${(code || '').length})，將從 CDN 重新安裝`)
         }
       }
       console.log('[Auto-init] Checked localStorage')
@@ -70,27 +84,25 @@ const initPlugins = async () => {
       console.error('Failed to install Audiomack from CDN:', e)
     }
   }
+  
+  // 標記插件加載完成
+  pluginsReady = true
+  console.log('[Auto-init] All plugins loaded')
 }
-
-// 等待插件加載完成
-let pluginsLoaded = false
-initPlugins().then(() => {
-  pluginsLoaded = true
-  console.log('[Plugins] All plugins loaded')
-}).catch(e => {
-  console.error('[Plugins] Failed to load plugins:', e)
-})
 
 // 公開的等待方法
 const waitForPlugins = async (): Promise<boolean> => {
-  if (pluginsLoaded) return true
+  if (pluginsReady) return true
   // 等待最多 10 秒
   const start = Date.now()
-  while (!pluginsLoaded && Date.now() - start < 10000) {
+  while (!pluginsReady && Date.now() - start < 10000) {
     await new Promise(r => setTimeout(r, 100))
   }
-  return pluginsLoaded
+  return pluginsReady
 }
+
+// 自動啟動插件初始化
+initPlugins()
 
 export default function App() {
   const [keyword, setKeyword] = useState('')
@@ -151,25 +163,15 @@ export default function App() {
     setResults([])
     setErrorMessage(null)
     try {
-      const loaded = await waitForPlugins()
-      if (!loaded) {
-        setErrorMessage('插件加載中，請稍後再試...')
-        setLoading(false)
-        return
+      const response = await fetch(`/api/search?q=${encodeURIComponent(keyword)}&type=${searchType}`)
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || '搜尋失敗')
       }
-      const allPlugins = pluginManager.getPlugins()
-      const enabledPlugins = allPlugins.filter(p => pluginManager.isPluginEnabled(p.name))
-      console.log('[Search] 插件列表:', enabledPlugins.map(p => p.name))
-      if (enabledPlugins.length === 0) {
-        setErrorMessage('沒有啟用的插件，請先安裝並啟用插件。')
-        setLoading(false)
-        return
-      }
-      const allResults = await pluginManager.search(keyword.trim(), searchType)
-      console.log('[Search] 結果數量:', allResults.length)
-      setResults(allResults)
-      if (allResults.length === 0) {
-        setErrorMessage(`沒有找到關鍵字「${keyword.trim()}」的搜尋結果。插件已載入 ${allPlugins.length} 個。`)
+      const results = await response.json()
+      setResults(results)
+      if (results.length === 0) {
+        setErrorMessage(`沒有找到關鍵字「${keyword}」的搜尋結果。`)
       }
     } catch (e: any) {
       const msg = `搜尋失敗: ${e.message || String(e)}`
@@ -189,21 +191,23 @@ export default function App() {
   const play = async (item: MusicItem) => {
     setPlayingItem(item)
     try {
-      const plugin = pluginManager.getPlugin(item.platform)
-      if (plugin) {
-        const source = await plugin.getMediaSource(item)
-        if (source.url) {
-          await player.play(source.url)
-          setIsPlaying(true)
-        } else {
-          showNotification('無法獲取音源 URL', 'error')
-        }
-      } else {
-        showNotification('插件未找到', 'error')
+      // Use server-side API to get media URL (no CORS issues)
+      const mediaUrl = `/api/media?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(item.platform || 'Audiomack')}`
+      const response = await fetch(mediaUrl)
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.error || 'Failed to get media source')
       }
+      const { url: audioUrl } = await response.json()
+      if (!audioUrl) {
+        showNotification('無法獲取音源 URL', 'error')
+        return
+      }
+      await player.play(audioUrl)
+      setIsPlaying(true)
     } catch (e) {
       console.error('Get media source error:', e)
-      showNotification('播放失敗', 'error')
+      showNotification(`播放失敗: ${e}`, 'error')
     }
   }
 
@@ -308,7 +312,7 @@ export default function App() {
       const pluginCodes: Record<string, string> = JSON.parse(localStorage.getItem('musicfree-plugin-codes') || '{}')
       const pluginData = pluginManager.getPlugins().map(p => ({
         name: p.name,
-        code: pluginCodes[p.name] || '',
+        code: pluginCodes[p.name] || '',   // 直接存原始 code，不再 JSON 編碼
         enabled: pluginManager.isPluginEnabled(p.name)
       }))
       localStorage.setItem('musicfree-plugins', JSON.stringify(pluginData))
