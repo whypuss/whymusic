@@ -4,8 +4,111 @@ import CryptoJS from 'crypto-js'
 // ====== MusicFree 原生 packages polyfill ======
 // 完全照搬原項目 src/core/pluginManager/plugin.ts 的 packages 對象
 
-const CORS_PROXY = 'https://corsproxy.io/?'
+// ====== Request Classifier ======
+// 按請求分流，而不是按插件分流（核心架構修復）
 
+type RequestType = 'oauth' | 'public' | 'backend' | 'direct'
+
+// YouTube 和 猫耳FM 的搜索 API 不支持 CORS，需要走代理
+const PUBLIC_DOMAINS = [
+  // YouTube 搜索 API (CORS 不支持，需要代理)
+  'youtube.com',
+  'www.youtube.com',
+  'youtu.be',
+  'youtubei.googleapis.com',
+  'googleapis.com',
+  'googlevideo.com',
+  'rr1---sn-*.googlevideo.com',
+  // 猫耳FM 搜索 API (CORS 不支持，需要代理)
+  'www.missevan.com',
+  'missevan.com',
+  // 猫耳FM 音頻 CDN (HLS audio segments)
+  'sound-aka-cdn-ov.maoercdn.com',
+  'maoercdn.com',
+  // SoundCloud 需要代理（CORS 不允许）
+  'api.soundcloud.com',
+  'soundcloud.com',
+  // Suno
+  'suno.ai',
+  'studio-api.suno.ai',
+  'cdn1.suno.ai',
+  // Udio
+  'udio.com',
+  'www.udio.com',
+  'api.udio.com',
+  // 音悦台
+  'yinyuetai.com',
+  'api.yinyuetai.com',
+  // 歌词网
+  'geciwang.com',
+  'api.geciwang.com',
+  // 歌词千寻
+  'geciqianxun.com',
+  'api.geciqianxun.com',
+]
+
+const DIRECT_DOMAINS: string[] = []
+
+const BACKEND_PREFIX = '/api/'
+
+function classifyRequest(url: string, headers?: Record<string, string>): RequestType {
+  // 檢查 Authorization 頭 → OAuth signed 請求
+  if (headers?.Authorization || headers?.authorization) {
+    return 'oauth'
+  }
+  // 檢查 URL → backend API
+  if (url.startsWith(BACKEND_PREFIX)) {
+    return 'backend'
+  }
+  // YouTube 搜尋 API 需要代理（CORS 封鎖）
+  try {
+    const domain = new URL(url).hostname.toLowerCase()
+    if (DIRECT_DOMAINS.some(d => domain.includes(d))) {
+      return 'direct'
+    }
+  } catch {
+    // 不是有效 URL，直接通過
+  }
+  // 檢查域名 → public API（YouTube、猫耳FM 等需要代理）
+  try {
+    const domain = new URL(url).hostname.toLowerCase()
+    if (PUBLIC_DOMAINS.some(d => domain.includes(d))) {
+      return 'public'
+    }
+  } catch {
+    // 不是有效 URL，直接通過
+  }
+  // 預設直接請求
+  return 'direct'
+}
+
+// ====== Proxy Policy Engine ======
+// per-request 代理決策，不是全局開關
+
+// 使用自己的 Cloudflare Functions proxy（支援 POST/PUT 等任何方法）
+const CORS_PROXY = '/api/proxy?url='
+
+function shouldProxy(url: string, type: RequestType): boolean {
+  switch (type) {
+    case 'oauth':
+    case 'backend':
+      return false // OAuth 簽名禁止改 URL，backend 不需要代理
+    case 'public':
+      return true  // Public API 必須跨域代理
+    default:
+      return false
+  }
+}
+
+function getProxyUrl(url: string, type: RequestType, method?: string): string {
+  if (shouldProxy(url, type)) {
+    const m = method || 'GET'
+    return CORS_PROXY + encodeURIComponent(url) + '&method=' + m
+  }
+  return url
+}
+
+// ====== Axios polyfill ======
 const axios = (function() {
   function axiosFn(config: any) {
     let url = config.url || config
@@ -20,29 +123,30 @@ const axios = (function() {
     }
     // GET 請求可以帶 data（某些插件這麼用）
     let body: string | undefined
-    if (['POST', 'PUT', 'PATCH'].includes(config.method || 'GET') && config.data) {
+    if (['POST', 'PUT', 'PATCH'].includes((config.method || 'GET').toUpperCase()) && config.data) {
       body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data)
     }
-    // 自動添加 CORS 代理前綴（如果配置了代理）
-    let requestUrl = url
-    if (CORS_PROXY && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:')) {
-      requestUrl = CORS_PROXY + encodeURIComponent(url)
-    }
+    // Request classification + proxy policy
+    const headers = config.headers || {}
+    const reqType = classifyRequest(url, headers)
+    const requestUrl = getProxyUrl(url, reqType, config.method || 'GET')
     return fetch(requestUrl, {
       method: config.method || 'GET',
       headers: {
         'Content-Type': 'application/json',
-        ...(config.headers || {}),
+        ...headers,
       },
       body,
     }).then(async (res) => {
       const headers: Record<string, string> = {}
       res.headers.forEach((v, k) => { headers[k] = v })
+      // 先讀 text，再嘗試 parse JSON（避免 body stream 被消費兩次）
+      const text = await res.text()
       let data: any
       try {
-        data = await res.json()
+        data = JSON.parse(text)
       } catch {
-        data = await res.text()
+        data = text
       }
       if (!res.ok) {
         console.error(`[axios] Request failed: ${requestUrl} (${res.status})`, data)
@@ -70,7 +174,7 @@ const axios = (function() {
   return axiosFn
 })()
 
-// 原項目：packages = { cheerio, "crypto-js": CryptoJs, axios, dayjs, ... }
+// ====== Packages polyfill ======
 const packages: Record<string, any> = {
   axios,
   'crypto-js': CryptoJS,
@@ -106,12 +210,9 @@ const packages: Record<string, any> = {
     encode: (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
     decode: (str: string) => str.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&'),
   },
-  'big-integer': {
-    // 簡單實現
-  },
+  'big-integer': {},
   cheerio: {
     load: (html: string) => {
-      // 簡單實現：用 DOMParser
       const parser = new DOMParser()
       const doc = parser.parseFromString(html, 'text/html')
       return {
@@ -127,7 +228,6 @@ const packages: Record<string, any> = {
   webdav: {},
 }
 
-// 原項目：const _require = (packageName) => { let pkg = packages[packageName]; pkg.default = pkg; return pkg; }
 const _require = (packageName: string) => {
   let pkg = packages[packageName]
   if (!pkg) {
@@ -161,32 +261,34 @@ function formatAuthUrl(url: string) {
   }
 }
 
+// ====== PluginRunner ======
 export class PluginRunner {
   static load(code: string): Plugin {
-    // CORS 代理：攔截所有 fetch 請求（插件可能用 fetch 而不是 axios）
-    const originalFetch = fetch
-    const proxiedFetch: typeof fetch = async (input, init) => {
-      let url: string
-      if (typeof input === 'string') {
-        url = input
-      } else if (input instanceof Request) {
-        url = input.url
-      } else {
-        url = String(input)
-      }
-      let requestUrl = url
-      if (CORS_PROXY && !url.startsWith('data:') && !url.startsWith('blob:') && !url.startsWith('javascript:') && !url.startsWith('about:') && !url.startsWith('//')) {
-        // 檢測是否已經是代理 URL，避免雙重代理
-        if (!url.startsWith(CORS_PROXY) && !url.includes('corsproxy.io') && !url.includes('allorigins.win') && !url.includes('cors-anywhere')) {
-          requestUrl = CORS_PROXY + encodeURIComponent(url)
+    // 為每個插件創建獨立的 fetch sandbox（isolation boundary）
+    const createProxiedFetch = () => {
+      const originalFetch = fetch
+      return async (input: RequestInfo | URL, init?: RequestInit) => {
+        let url: string
+        if (typeof input === 'string') {
+          url = input
+        } else if (input instanceof Request) {
+          url = input.url
+        } else {
+          url = String(input)
         }
+        const headers = (init?.headers as Record<string, string>) || {}
+        const reqType = classifyRequest(url, headers)
+        const method = init?.method || 'GET'
+        let requestUrl = getProxyUrl(url, reqType, method)
+        const proxyInput = requestUrl !== url ? requestUrl : input
+        const response = await originalFetch(proxyInput, init)
+        // 修復 CORS 代理後 headers 中 location 指向原始 URL 的問題
+        const newResponse = new Response(response.body, response)
+        return newResponse
       }
-      const proxyInput = requestUrl !== url ? requestUrl : input
-      const response = await originalFetch(proxyInput, init)
-      // 修復 CORS 代理後 headers 中 location 指向原始 URL 的問題
-      const newResponse = new Response(response.body, response)
-      return newResponse
     }
+
+    const proxiedFetch = createProxiedFetch()
 
     const sandbox = {
       module: { exports: {} },

@@ -1,25 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
+import audiomackCode from './plugins/bundled/audiomack.js?raw'
 
 const player = new Player()
 const pluginManager = new PluginManager()
+
+/** 官方插件（內置代碼，無需 CDN 安裝） */
 const OFFICIAL_PLUGINS = [
-  { name: 'Audiomack', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js' },
-  { name: 'Bilibili', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/bilibili/index.js' },
-  { name: 'Kuaishou', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/kuaishou/index.js' },
-  { name: '猫耳FM', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/maoerfm/index.js' },
-  { name: 'Suno', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/suno/index.js' },
-  { name: 'Udio', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/udio/index.js' },
-  { name: '音悦台', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/yinyuetai/index.js' },
-  { name: 'YouTube', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/youtube/index.js' },
-  { name: 'Airsonic', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/airsonic/index.js' },
-  { name: 'Navidrome', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/navidrome/index.js' },
-  { name: 'WebDAV', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/webdav/index.js' },
-  { name: '歌词网', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciwang/index.js' },
-  { name: '歌词千寻', url: 'https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/geciqianxun/index.js' },
+  { name: 'Audiomack', code: audiomackCode },
 ]
 
-// 加載插件（強制使用 jsDeliver CDN）
+// 加載插件（優先使用內置代碼）
 let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
 
@@ -28,62 +19,24 @@ const initPlugins = async () => {
   if (pluginsInitialized) return
   pluginsInitialized = true
 
-  // 1. 先從 localStorage 恢復插件代碼（優先使用已安裝的插件）
-  let anyValidPlugin = false
-  try {
-    const saved = localStorage.getItem('musicfree-plugins')
-    if (saved) {
-      const data = JSON.parse(saved) as Array<{ name: string; code?: string; enabled: boolean }>
-      for (const p of data) {
-        if (p.name === 'Demo Plugin') continue
-        // 修復雙層 JSON 編碼問題：code 可能被 JSON.stringify 了兩次
-        // 如果 code 以 " 開頭且以 " 結尾，說明是 JSON 字串，需要再 parse 一次
-        let code = p.code
-        if (code && code.startsWith('"') && code.endsWith('"') && code.length > 2) {
-          try {
-            code = JSON.parse(code)
-            console.log(`[Auto-init] Fixed double-encoded code for ${p.name}`)
-          } catch (e) {
-            // 如果 parse 失敗，就用原始 code（可能還是有問題）
-          }
-        }
-        // 檢測 code 是否有效：至少 1KB 才算真實插件代碼（'CDN' 等殘留數據太短）
-        if (code && code.length > 1000) {
-          try {
-            pluginManager.loadPlugin(code, p.name)
-            if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
-            anyValidPlugin = true
-            console.log(`[Auto-init] Loaded ${p.name} from localStorage (${code.length} chars)`)
-          } catch (e) {
-            console.warn(`[Auto-init] ${p.name} 本地代碼無效，將從 CDN 重新安裝`, e)
-          }
-        } else {
-          console.warn(`[Auto-init] ${p.name} 本地代碼缺失/過短 (length=${(code || '').length})，將從 CDN 重新安裝`)
-        }
-      }
-      console.log('[Auto-init] Checked localStorage')
-    }
-  } catch (e) {
-    console.error('Failed to load plugins from localStorage:', e)
-  }
-
-  // 2. 如果 localStorage 沒有有效插件，自動安裝 Audiomack
-  if (!anyValidPlugin) {
+  // 直接使用內置的 OFFICIAL_PLUGINS（確保使用最新版本）
+  console.log('[Auto-init] Using bundled OFFICIAL_PLUGINS (latest version)')
+  for (const p of OFFICIAL_PLUGINS) {
     try {
-      const response = await fetch('https://cdn.jsdelivr.net/gh/maotoumao/MusicFreePlugins@master/dist/audiomack/index.js')
-      if (!response.ok) throw new Error('Failed to fetch')
-      const code = await response.text()
-      pluginManager.loadPlugin(code, 'Audiomack')
-      // 保存到 localStorage：code 存完整插件代碼，確保刷新後能恢復
-      localStorage.setItem('musicfree-plugin-codes', JSON.stringify({ Audiomack: code }))
-      localStorage.setItem('musicfree-plugins', JSON.stringify([
-        { name: 'Audiomack', code, enabled: true }   // ← 存完整 code，不是 'CDN'
-      ]))
-      console.log('[Auto-init] Installed Audiomack from CDN and saved to localStorage')
+      pluginManager.loadPlugin(p.code, p.name)
+      pluginManager.setPluginEnabled(p.name, true)
+      console.log(`[Auto-init] Loaded ${p.name} from bundled code (${p.code.length} chars)`)
     } catch (e) {
-      console.error('Failed to install Audiomack from CDN:', e)
+      console.error(`[Auto-init] Failed to load ${p.name} from bundled code:`, e)
     }
   }
+  
+  // 將內置插件保存至 localStorage（覆蓋舊版本）
+  const plugins = OFFICIAL_PLUGINS.map(p => ({ name: p.name, code: p.code, enabled: true }))
+  const codes: Record<string, string> = {}
+  for (const p of plugins) { codes[p.name] = p.code }
+  localStorage.setItem('musicfree-plugin-codes', JSON.stringify(codes))
+  localStorage.setItem('musicfree-plugins', JSON.stringify(plugins))
   
   // 標記插件加載完成
   pluginsReady = true
@@ -115,11 +68,18 @@ export default function App() {
   const [pluginName, setPluginName] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'store'>('search')
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
   const [searchType, setSearchType] = useState<SearchType>('music')
+  const [searchPage, setSearchPage] = useState(1)
+  const [hasMore, setHasMore] = useState(true)
+  // 專輯/歌單詳情頁
+  const [albumDetail, setAlbumDetail] = useState<MusicItem | null>(null)
+  const [albumTracks, setAlbumTracks] = useState<MusicItem[]>([])
+  const [albumLoading, setAlbumLoading] = useState(false)
 
   // 依賴 pluginKey 來觸發重渲染
   const installedNames = useMemo(() => new Set(pluginManager.getPlugins().map(p => p.name)), [pluginKey])
@@ -157,20 +117,71 @@ export default function App() {
     }
   }, [])
 
-  const search = useCallback(async () => {
+  const search = useCallback(async (pageNum: number = 1, append = false) => {
     if (!keyword.trim()) return
-    setLoading(true)
-    setResults([])
-    setErrorMessage(null)
+    if (pageNum === 1) {
+      setLoading(true)
+      setResults([])
+      setErrorMessage(null)
+      setHasMore(true)
+    } else {
+      setLoadingMore(true)
+    }
+    
+    // 確保插件已初始化
+    const ready = await waitForPlugins()
+    if (!ready) {
+      setLoading(false)
+      setLoadingMore(false)
+      setErrorMessage('插件尚未載入，請稍後再試。')
+      return
+    }
+    
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(keyword)}&type=${searchType}`)
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || '搜尋失敗')
+      let newResults: any[] = []
+      const enabledPlugins = pluginManager.getEnabledPlugins()
+      console.log('[App] Searching page:', pageNum, 'plugins:', enabledPlugins.map(p => p.name))
+      
+      for (const plugin of enabledPlugins) {
+        // Audiomack：使用後端 API（OAuth 簽名由後端處理）
+        if (plugin.name === 'Audiomack') {
+          try {
+            const response = await fetch(`/api/search?q=${encodeURIComponent(keyword)}&type=${searchType}&page=${pageNum}`)
+            if (response.ok) {
+              const apiResults = await response.json()
+              newResults = newResults.concat(apiResults)
+              console.log('[App] Backend API page', pageNum, 'results:', apiResults.length)
+            }
+          } catch (e) {
+            console.error('[App] Backend API failed:', e)
+          }
+          continue
+        }
+        
+        // 其他 plugin
+        try {
+          const pluginResults = await pluginManager.searchForPlugin(plugin.name, keyword, searchType, pageNum)
+          if (pluginResults && pluginResults.length > 0) {
+            newResults = newResults.concat(pluginResults)
+            console.log('[App] Plugin results from', plugin.name, 'page', pageNum, ':', pluginResults.length)
+          }
+        } catch (e) {
+          console.error('[App] Plugin search failed:', plugin.name, e)
+        }
       }
-      const results = await response.json()
-      setResults(results)
-      if (results.length === 0) {
+      
+      if (append) {
+        setResults(prev => prev.concat(newResults))
+      } else {
+        setResults(newResults)
+      }
+      
+      // 判斷是否還有更多結果（每頁結果少於預期 → 沒有更多了）
+      if (newResults.length < 20) {
+        setHasMore(false)
+      }
+      
+      if (pageNum === 1 && newResults.length === 0) {
         setErrorMessage(`沒有找到關鍵字「${keyword}」的搜尋結果。`)
       }
     } catch (e: any) {
@@ -180,8 +191,9 @@ export default function App() {
       showNotification(msg, 'error')
     } finally {
       setLoading(false)
+      setLoadingMore(false)
     }
-  }, [keyword, searchType])
+  }, [keyword, searchType, pluginManager])
 
   const showNotification = (message: string, type: 'success' | 'error') => {
     setNotification({ message, type })
@@ -191,23 +203,63 @@ export default function App() {
   const play = async (item: MusicItem) => {
     setPlayingItem(item)
     try {
-      // Use server-side API to get media URL (no CORS issues)
-      const mediaUrl = `/api/media?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(item.platform || 'Audiomack')}`
-      const response = await fetch(mediaUrl)
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.error || 'Failed to get media source')
+      let audioUrl: string | null = null
+      const platform = item.platform || ''
+
+      if (platform === 'Audiomack') {
+        // Audiomack: 後端 OAuth 簽名，直接使用 signed URL（不走代理，避免簽名被編碼破壞）
+        const mediaUrl = `/api/media?id=${encodeURIComponent(String(item.id))}&platform=Audiomack`
+        const response = await fetch(mediaUrl)
+        if (!response.ok) {
+          const err = await response.json()
+          const errMsg = err.error || 'Failed to get Audiomack media'
+          // 如果專輯內有歌曲列表，嘗試下一首
+          const album = (item as any)._albumDetail
+          if (album && (item as any)._trackIndex !== undefined) {
+            const allTracks = album.musicList || []
+            const nextIdx = ((item as any)._trackIndex || 0) + 1
+            if (nextIdx < allTracks.length) {
+              const nextTrack = allTracks[nextIdx]
+              console.log(`[play] Song ${item.id} failed (${errMsg}), trying next: ${nextTrack.id}`)
+              nextTrack._albumDetail = album
+              nextTrack._trackIndex = nextIdx
+              return await play(nextTrack)
+            }
+          }
+          throw new Error(errMsg)
+        }
+        const data = await response.json()
+        audioUrl = data.url || null
+        console.log('[play] Audiomack signed URL')
+      } else {
+        // 其他平台：嘗試 getMediaSource，失敗後回 /api/play
+        const plugin = pluginManager.getPlugin(platform)
+        const getMediaSourceFn = plugin?.getMediaSource
+        if (getMediaSourceFn) {
+          try {
+            const result = await getMediaSourceFn(item)
+            if (result?.url) {
+              audioUrl = `/api/proxy?url=${encodeURIComponent(result.url)}&method=GET`
+              console.log('[play] Proxied URL for', platform)
+            }
+          } catch { /* ignore */ }
+        }
+        // Fallback: 後端 /api/play
+        if (!audioUrl) {
+          audioUrl = `/api/play?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}`
+        }
       }
-      const { url: audioUrl } = await response.json()
+
       if (!audioUrl) {
         showNotification('無法獲取音源 URL', 'error')
         return
       }
+
       await player.play(audioUrl)
       setIsPlaying(true)
-    } catch (e) {
+    } catch (e: any) {
       console.error('Get media source error:', e)
-      showNotification(`播放失敗: ${e}`, 'error')
+      showNotification(`播放失敗: ${e.message || e}`, 'error')
     }
   }
 
@@ -216,9 +268,71 @@ export default function App() {
     setIsPlaying(player.isPlaying)
   }
 
+  const loadMore = async () => {
+    const nextPage = searchPage + 1
+    setSearchPage(nextPage)
+    await search(nextPage, true)
+  }
+
+  // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
+  const handleItemClick = (item: MusicItem) => {
+    if (item.type === 'album' || item.type === 'sheet') {
+      // 專輯/歌單：顯示專輯詳情
+      setAlbumDetail(item)
+      // 如果後端已經返回 musicList，直接使用
+      const tracks = item.musicList || []
+      setAlbumTracks(tracks)
+      if (tracks.length === 0) {
+        // 需要從後端載入
+        loadAlbumTracks(item)
+      }
+    } else {
+      // 歌曲：直接播放
+      play(item)
+    }
+  }
+
+  // 從後端載入專輯歌曲列表
+  const loadAlbumTracks = async (item: MusicItem) => {
+    setAlbumLoading(true)
+    try {
+      const id = String(item.id || '')
+      const slug = item.url_slug || ''
+      const artist = item.artist || ''
+      if (!slug || !artist) {
+        setErrorMessage('專輯資訊不完整，無法載入歌曲列表')
+        setAlbumLoading(false)
+        return
+      }
+      const response = await fetch(`/api/album?id=${encodeURIComponent(id)}&slug=${encodeURIComponent(slug)}&artist=${encodeURIComponent(artist)}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (Array.isArray(data)) {
+          setAlbumTracks(data)
+        } else {
+          setErrorMessage(`載入專輯失敗: ${data.error || '未知錯誤'}`)
+        }
+      } else {
+        setErrorMessage('載入專輯失敗')
+      }
+    } catch (e) {
+      console.error('Load album tracks failed:', e)
+      setErrorMessage('載入專輯失敗')
+    } finally {
+      setAlbumLoading(false)
+    }
+  }
+
+  // 返回搜尋結果
+  const goBackToSearch = () => {
+    setAlbumDetail(null)
+    setAlbumTracks([])
+  }
+
   const handleSearchSubmit = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      search()
+      setSearchPage(1)
+      search(1)
     }
   }
 
@@ -255,18 +369,16 @@ export default function App() {
     }
   }
 
-  const installOfficialPlugin = async (plugin: { name: string; url: string }) => {
+  const installOfficialPlugin = async (plugin: { name: string; code: string }) => {
     if (pluginManager.getPlugin(plugin.name)) {
       showNotification(`插件 "${plugin.name}" 已安裝`, 'success')
       return
     }
     try {
       setLoading(true)
-      const response = await fetch(plugin.url)
-      if (!response.ok) throw new Error('Failed to fetch')
-      const code = await response.text()
-      pluginManager.loadPlugin(code, plugin.name)
-      savePluginCode(plugin.name, code)
+      pluginManager.loadPlugin(plugin.code, plugin.name)
+      pluginManager.setPluginEnabled(plugin.name, true)
+      savePluginCode(plugin.name, plugin.code)
       setPluginToggles(prev => ({ ...prev, [plugin.name]: true }))
       setPluginKey(k => k + 1)
       showNotification(`插件 "${plugin.name}" 已安裝`, 'success')
@@ -324,7 +436,7 @@ export default function App() {
   // 依賴 pluginKey 來觸發重渲染，確保商店按鈕狀態正確
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-900 to-purple-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className="min-h-screen bg-gradient-to-br from-sky-800 to-indigo-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {/* Notification */}
       {notification && (
         <div
@@ -348,65 +460,135 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {currentView === 'search' && (
             <div>
-              {/* Search Bar */}
-              <div className="flex gap-2 max-w-2xl mx-auto mb-4">
-                <input
-                  type="text"
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.currentTarget.value)}
-                  onKeyDown={handleSearchSubmit}
-                  placeholder="輸入關鍵字搜索..."
-                  className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white outline-none"
-                />
-                <select
-                  value={searchType}
-                  onChange={(e) => setSearchType(e.target.value as SearchType)}
-                  className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white outline-none"
-                >
-                  <option value="music">歌曲</option>
-                  <option value="album">專輯</option>
-                  <option value="sheet">歌單</option>
-                  <option value="artist">歌手</option>
-                </select>
-                <button
-                  onClick={search}
-                  disabled={!keyword.trim() || loading}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition disabled:opacity-50"
-                >
-                  {loading ? '搜索中...' : '搜索'}
-                </button>
-              </div>
-
-              {/* Results */}
-              <div className="space-y-2 max-w-2xl mx-auto">
-                {results.length === 0 && !loading && (
-                  <div className="text-center text-gray-500 py-8">
-                    {pluginManager.getPlugins().length === 0 
-                      ? '請先在「商店」安裝插件。' 
-                      : '未找到結果。'}
-                  </div>
-                )}
-                {results.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
-                    onClick={() => play(item)}
+              {/* 專輯詳情頁 */}
+              {albumDetail ? (
+                <div>
+                  {/* 返回按鈕 */}
+                  <button
+                    onClick={goBackToSearch}
+                    className="mb-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
                   >
-                    <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
-                      {playingItem?.id === item.id && isPlaying ? (
-                        <span className="text-white font-bold text-xs">♪</span>
-                      ) : (
-                        <span className="text-white font-bold">{(item.title || '♪')[0]}</span>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{item.title || '未知歌曲'}</div>
-                      <div className="text-sm text-gray-400 truncate">{item.artist || '未知藝術家'}</div>
-                    </div>
-                    <div className="text-sm text-gray-500 flex-shrink-0">{item.platform || '未知'}</div>
+                    ← 返回搜尋結果
+                  </button>
+                  {/* 專輯頭部 */}
+                  <div className="text-center mb-6 max-w-2xl mx-auto">
+                    <h2 className="text-2xl font-bold mb-2">{albumDetail.title || '未知專輯'}</h2>
+                    <p className="text-gray-400">{albumDetail.artist || ''}</p>
                   </div>
-                ))}
-              </div>
+                  {/* 歌曲列表 */}
+                  <div className="space-y-2 max-w-2xl mx-auto">
+                    {albumLoading && (
+                      <div className="text-center text-gray-500 py-8">載入中...</div>
+                    )}
+                    {!albumLoading && albumTracks.length === 0 && (
+                      <div className="text-center text-gray-500 py-8">無歌曲數據</div>
+                    )}
+                    {albumTracks.map((track, idx) => (
+                      <div
+                        key={track.id}
+                        className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
+                        onClick={() => {
+                          // Attach album context to track for auto-skip
+                          const trackWithCtx = { ...track, _albumDetail: albumDetail, _trackIndex: idx }
+                          play(trackWithCtx)
+                        }}
+                      >
+                        <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
+                          {playingItem?.id === track.id && isPlaying ? (
+                            <span className="text-white font-bold text-xs">♪</span>
+                          ) : (
+                            <span className="text-white font-bold">{(track.title || '♪')[0]}</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{track.title || '未知歌曲'}</div>
+                          <div className="text-sm text-gray-400 truncate">{track.artist || '未知藝術家'}</div>
+                        </div>
+                        <div className="text-sm text-gray-500 flex-shrink-0">{track.platform || '未知'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Search Bar */}
+                  <div className="flex gap-2 max-w-2xl mx-auto mb-4">
+                    <input
+                      type="text"
+                      value={keyword}
+                      onChange={(e) => setKeyword(e.currentTarget.value)}
+                      onKeyDown={handleSearchSubmit}
+                      placeholder="輸入關鍵字搜索..."
+                      className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white outline-none"
+                    />
+                    <select
+                      value={searchType}
+                      onChange={(e) => setSearchType(e.target.value as SearchType)}
+                      className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white outline-none"
+                    >
+                      <option value="music">歌曲</option>
+                      <option value="album">專輯</option>
+                      <option value="sheet">歌單</option>
+                      <option value="artist">歌手</option>
+                    </select>
+                    <button
+                      onClick={() => { setSearchPage(1); search(1) }}
+                      disabled={!keyword.trim() || loading}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition disabled:opacity-50"
+                    >
+                      {loading ? '搜索中...' : '搜索'}
+                    </button>
+                  </div>
+
+                  {/* Results */}
+                  <div className="space-y-2 max-w-2xl mx-auto">
+                    {results.length === 0 && !loading && (
+                      <div className="text-center text-gray-500 py-8">
+                        {pluginManager.getPlugins().length === 0
+                          ? '請先在「商店」安裝插件。'
+                          : '未找到結果。'}
+                      </div>
+                    )}
+                    {results.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
+                        onClick={() => handleItemClick(item)}
+                      >
+                        <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
+                          {playingItem?.id === item.id && isPlaying ? (
+                            <span className="text-white font-bold text-xs">♪</span>
+                          ) : (
+                            <span className="text-white font-bold">{(item.title || '♪')[0]}</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{item.title || '未知歌曲'}</div>
+                          <div className="text-sm text-gray-400 truncate">{item.artist || '未知藝術家'}</div>
+                        </div>
+                        {item.type && item.type !== 'music' && (
+                          <div className="text-xs px-2 py-1 bg-blue-600 rounded flex-shrink-0">
+                            {item.type === 'album' ? '專輯' : item.type === 'sheet' ? '歌單' : item.type}
+                          </div>
+                        )}
+                        <div className="text-sm text-gray-500 flex-shrink-0">{item.platform || '未知'}</div>
+                      </div>
+                    ))}
+                    {/* 載入更多按鈕 */}
+                    {results.length > 0 && hasMore && (
+                      <div className="text-center mt-4">
+                        <button
+                          onClick={loadMore}
+                          disabled={loadingMore}
+                          className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition disabled:opacity-50"
+                        >
+                          {loadingMore ? '載入中...' : '載入更多'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -478,22 +660,22 @@ export default function App() {
               <h2 className="text-xl font-bold mb-4">插件商店</h2>
               <p className="text-sm text-gray-400 mb-4">點擊安裝官方插件，安裝後可在插件管理中啟用/禁用</p>
               <div className="space-y-2">
-                {OFFICIAL_PLUGINS.map((plugin) => (
-                  <div key={plugin.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                {OFFICIAL_PLUGINS.map((p) => (
+                  <div key={p.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
                     <div>
-                      <div className="font-medium">{plugin.name}</div>
+                      <div className="font-medium">{p.name}</div>
                       <div className="text-sm text-gray-400">官方插件</div>
                     </div>
                     <button
-                      onClick={() => installOfficialPlugin(plugin)}
-                      disabled={installedNames.has(plugin.name) || loading}
+                      onClick={() => installOfficialPlugin(p)}
+                      disabled={installedNames.has(p.name) || loading}
                       className={`px-3 py-1 rounded text-sm ${
-                        installedNames.has(plugin.name)
+                        installedNames.has(p.name)
                           ? 'bg-gray-600 cursor-not-allowed'
                           : 'bg-green-600 hover:bg-green-700'
                       }`}
                     >
-                      {installedNames.has(plugin.name) ? '已安裝' : '安裝'}
+                      {installedNames.has(p.name) ? '已安裝' : '安裝'}
                     </button>
                   </div>
                 ))}

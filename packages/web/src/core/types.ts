@@ -23,6 +23,14 @@ export interface MusicItem {
   cover?: string
   /** MusicFree 原生：歌曲 ID（兼容） */
   songmid?: string
+  /** 項目類型：歌曲 / 專輯 / 歌單 / 歌手 */
+  type?: 'music' | 'album' | 'sheet' | 'artist'
+  /** 專輯/歌單 URL slug */
+  url_slug?: string
+  /** 專輯/歌單內的歌曲列表（專輯/歌單詳情） */
+  musicList?: MusicItem[]
+  /** 後端返回的音頻時長 */
+  duration?: number
 }
 
 /**
@@ -59,9 +67,9 @@ export interface Plugin {
   instance?: any
   supportedMethods?: Set<string>
   /** 搜索歌曲（返回 MusicFree 原生格式 {data, isEnd}） */
-  search(query: string, page?: number, type?: SearchType): Promise<SearchResults>
+  search?(query: string, page?: number, type?: SearchType): Promise<SearchResults>
   /** 獲取音源 URL */
-  getMediaSource(item: MusicItem, quality?: string): Promise<MediaSource>
+  getMediaSource?(item: MusicItem, quality?: string): Promise<MediaSource>
   /** 獲取歌曲詳情 */
   getMusicInfo?(item: MusicItem): Promise<any>
   /** 獲取歌詞 */
