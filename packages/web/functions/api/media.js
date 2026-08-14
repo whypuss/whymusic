@@ -5,9 +5,15 @@
  * encodeSignature: false — signature is NOT double-encoded in final URL
  */
 
+// ── OAuth 1.0 Configuration ────────────────────────────────────────
+// Load from environment variables (CF Pages Environment Variables /
+// wrangler secret / server .env). Defaults shown are Audiomack's
+// public example credentials — replace with your own in production.
 const API_BASE = 'https://api.audiomack.com/v1'
-const OAUTH_CONSUMER_KEY = 'audiomack-web'
-const OAUTH_SECRET = 'bd8a07e9f23fbe9d808646b730f89b8e'
+const OAUTH_CONSUMER_KEY =
+  process.env.AUDIOMACK_OAUTH_CONSUMER_KEY || 'audiomack-web'
+const OAUTH_SECRET =
+  process.env.AUDIOMACK_OAUTH_SECRET || 'REPLACE_WITH_YOUR_SECRET'
 const OAUTH_VERSION = '1.0'
 const OAUTH_METHOD = 'HMAC-SHA1'
 

@@ -4,9 +4,15 @@
  * OAuth 1.0 HMAC-SHA1 signature
  */
 
+// ── OAuth 1.0 Configuration ────────────────────────────────────────
+// Load from environment variables (CF Pages Environment Variables /
+// wrangler secret / server .env). Defaults shown are Audiomack's
+// public example credentials — replace with your own in production.
 const API_BASE = 'https://api.audiomack.com/v1'
-const OAUTH_CONSUMER_KEY = 'audiomack-js'
-const OAUTH_SECRET = 'f3ac5b086f3eab260520d8e3049561e6'
+const OAUTH_CONSUMER_KEY =
+  process.env.AUDIOMACK_OAUTH_CONSUMER_KEY || 'audiomack-js'
+const OAUTH_SECRET =
+  process.env.AUDIOMACK_OAUTH_SECRET || 'REPLACE_WITH_YOUR_SECRET'
 const OAUTH_VERSION = '1.0'
 const OAUTH_METHOD = 'HMAC-SHA1'
 

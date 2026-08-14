@@ -29,7 +29,7 @@ async function hmacSha1(key, data) {
 }
 
 export async function onRequest({ request }) {
-  const OAUTH_SECRET = 'f3ac5b086f3eab260520d8e3049561e6'
+  const OAUTH_SECRET = process.env.AUDIOMACK_OAUTH_SECRET || 'REPLACE_WITH_YOUR_SECRET'
   const baseString = 'GET&https%3A%2F%2Fapi.audiomack.com%2Fv1%2Fsearch&limit%3D20%26oauth_consumer_key%3Daudiomack-js%26oauth_nonce%3Dtest123%26oauth_signature_method%3DHMAC-SHA1%26oauth_timestamp%3D1783220286%26oauth_version%3D1.0%26page%3D1%26q%3Ddrake%26show%3Dsongs%26sort%3Dpopular'
   const signingKey = oauthEncode(OAUTH_SECRET) + '&'
 
