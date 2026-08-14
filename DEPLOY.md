@@ -1,63 +1,43 @@
 # MusicFree Web 部署指南
 
-> **MusicFree Web** — 基於 MusicFree 插件系統的 Web 版音樂播放器  
-> 搜尋 → 播放音樂，支援 Audiomack / YouTube / 猫耳FM 等多音源
+> 用浏览器搜尋和播放音樂。支援 Audiomack、YouTube、猫耳FM 等多個音源。
+> 基於開源專案 [MusicFree](https://github.com/maotoumao/MusicFree) 的插件系統。
 
 ---
 
-## 目錄
+## 先看這個：兩種部署方式，揀一個
 
-- [專案結構](#專案結構)
-- [方式一：自托管伺服器（推薦，完整功能）](#方式一自托管伺服器推薦完整功能)
-- [方式二：Cloudflare Pages（免費，僅前端+Edge API）](#方式二cloudflare-pages免費僅前端edge-api)
-- [環境變數說明](#環境變數說明)
-- [常見問題](#常見問題)
+| | **方案 A：VPS / 自建伺服器** | **方案 B：Cloudflare Pages** |
+|---|---|---|
+| 費用 | 一臺 VPS（$3-5/月） | **免費** |
+| 音源 | ✅ 全部（Audiomack + YouTube + 猫耳FM + 更多） | ⚠️ 僅 Audiomack |
+| 插件系統 | ✅ 支援第三方插件 | ❌ 不支援 |
+| 難易度 | 中等（要配 nginx） | 簡單（幾條命令） |
+| 適合 | 想要完整功能 | 只想快速用起來聽歌 |
+
+> **新手建議：** 先試 Cloudflare Pages（免費、5 分鐘搞定）。想要全部音源再升級到 VPS。
 
 ---
 
-## 專案結構
+## 方式一：Cloudflare Pages（推薦新手）
 
+### 你需要
+
+- 一個 Cloudflare 帳號（[註冊](https://dash.cloudflare.com/sign-up)）
+- 一臺電腦（Mac / Windows / Linux 都行）
+- 會用終端機（Terminal / PowerShell）
+
+### 第一步：準備工具（3 分鐘）
+
+```bash
+# 安裝 Node.js（如果還沒有）
+# 去 https://nodejs.org 下載 LTS 版本
+
+# 安裝 pnpm 和 wrangler
+npm install -g pnpm wrangler
 ```
-musicweb/
-├── packages/
-│   ├── core/                 # 共享核心（Player、PluginManager）
-│   └── web/                  # Web 前端 + 後端
-│       ├── src/              # React + TypeScript 前端
-│       ├── functions/api/    # Cloudflare Pages Functions（Edge API）
-│       ├── scripts/
-│       │   ├── server.mjs    # ★ 自托管伺服器（Node.js 全功能後端）
-│       │   └── dev-proxy.mjs # 本地開發用代理
-│       ├── wrangler.toml     # Cloudflare Pages 設定
-│       └── package.json
-├── .env.example              # 環境變數範本（複製為 .env 使用）
-├── DEPLOY.md                 # 本文件
-└── package.json              # pnpm workspace 根設定
-```
 
-### 兩種部署差異
-
-| 特性 | 自托管 (VPS) | Cloudflare Pages |
-|------|-------------|-----------------|
-| 插件系統（全插件搜索） | ✅ | ❌ |
-| 音源代理（`/api/play` 流式播放） | ✅ | ❌ |
-| Audiomack OAuth 搜尋 | ✅ | ✅ |
-| 靜態前端 | ✅ | ✅ |
-| 費用 | 自付伺服器 | 免費 |
-| 適合 | 完整功能生產環境 | 僅需要 Audiomack 搜尋 |
-
----
-
-## 方式一：自托管伺服器（推薦，完整功能）
-
-> 適用於 VPS / 家庭伺服器 / Docker。需要 **Node.js 18+**、**nginx**。
-
-### 前置條件
-
-- Node.js ≥ 18（推薦 20 LTS）
-- nginx 作為反代 + TLS 終止
-- pnpm (`npm install -g pnpm`)
-
-### Step 1 — 克隆並安裝依賴
+### 第二步：克隆程式碼
 
 ```bash
 git clone https://github.com/whypuss/musicweb.git
@@ -65,115 +45,132 @@ cd musicweb
 pnpm install
 ```
 
-### Step 2 — 設定環境變數
+### 第三步：設定 Cloudflare
 
 ```bash
-cp .env.example .env
-# 編輯 .env，填入你的 Audiomack OAuth 憑證
-# 如果沒有自己的憑證，可以保留預設的 audiomack-js / audiomack-web（Audiomack 官方公開範例）
+# 用瀏覽器登入你的 Cloudflare 帳號
+wrangler login
 ```
 
-需要的環境變數：
+### 第四步：設定 Audiomack 憑證
 
-| 變數 | 用途 | 預設值 |
-|------|------|--------|
-| `AUDIOMACK_SEARCH_CONSUMER_KEY` | 搜尋 API 的 Consumer Key | `audiomack-js` |
-| `AUDIOMACK_SEARCH_SECRET` | 搜尋 API 的 Secret | （必填） |
-| `AUDIOMACK_MEDIA_CONSUMER_KEY` | 媒體/API 的 Consumer Key | `audiomack-web` |
-| `AUDIOMACK_MEDIA_SECRET` | 媒體/API 的 Secret | （必填） |
-
-### Step 3 — 編譯前端
-
-```bash
-pnpm build
-```
-
-編譯輸出在 `packages/web/dist/`。
-
-### Step 4 — 啟動伺服器
+Audiomack 的搜尋功能需要 OAuth 憑證。程式碼內建了占位符，需要你自己填：
 
 ```bash
 cd packages/web
-node scripts/server.mjs
+
+# 設定搜尋憑證（按提示輸入）
+wrangler secret put AUDIOMACK_OAUTH_CONSUMER_KEY
+wrangler secret put AUDIOMACK_OAUTH_SECRET
 ```
 
-伺服器預設監聽 **`:8788`**，同時提供：
-- 靜態前端檔案服務
-- `/api/search` — Audiomack OAuth 搜尋
-- `/api/media` — 取得音源 URL
-- `/api/album` — 專輯詳情
-- `/api/play` — 統一音源流代理（Audiomack / YouTube / 猫耳FM）
-- `/api/proxy` — 通用 CORS 代理
+> **Consumer Key 填 `audiomack-js`**（Audiomack 官方 App 使用的公開 Key）。
+> **Secret** 需要從 audiomack.com 取得——程式碼裡的占位符 `"REPLACE_WITH_YOUR_AUDIOMACK_SECRET"` 不能直接用。如果沒有自己的 secret，Audiomack 搜尋功能會返回 401 錯誤。
 
-如需修改端口，編輯 `scripts/server.mjs` 頂部的 `PORT` 常數。
-
-### Step 5 — 配置 nginx
-
-將以下配置存為 `/etc/nginx/sites-available/musicweb`，並修改 `server_name` 和你的域名：
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name music.example.com;    # ← 改成你的域名
-
-    ssl_certificate     /path/to/fullchain.pem;
-    ssl_certificate_key /path/to/privkey.pem;
-
-    root /var/www/musicweb;    # ← 改成 dist 的實際路徑
-    index index.html;
-
-    # ── API 反向代理到後端 ──
-    location /api/ {
-        proxy_pass http://127.0.0.1:8788;    # ← 如改了端口請同步
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # 流式播放需要關閉緩衝
-        proxy_buffering off;
-        proxy_request_buffering off;
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
-
-        # CORS（外部前端訪問時需要）
-        add_header Access-Control-Allow-Origin "*" always;
-        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
-        add_header Access-Control-Allow-Headers "*" always;
-    }
-
-    # ── 靜態前端 ──
-    location = /index.html {
-        try_files $uri /index.html;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
-    }
-
-    location /assets/ {
-        try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-```
-
-啟用並重載：
+### 第五步：部署
 
 ```bash
-ln -sf /etc/nginx/sites-available/musicweb /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
+pnpm build
+wrangler pages deploy dist --project-name=musicweb
 ```
 
-> **注意：** 如果你把 nginx 的 `root` 指向 `dist/`，則 API 反向代理的目標應該是後端的實際端口（`:8788`）。
-> 或者參考 Maxwell 的實際做法——用 `server.mjs` 直接監聽端口並同時服務靜態檔案 + API，nginx 只做 TLS 終止和單一端口反代，可減少一個轉發層。
+部署成功後，你會得到一個類似 `https://musicweb-xxxx.pages.dev` 的網址。用瀏覽器打開就能用了！
 
-### Step 6 — 用 systemd 守護進程（推薦）
+### 之後更新程式碼
 
-建立 `/etc/systemd/system/musicweb.service`：
+```bash
+git pull
+pnpm build
+wrangler pages deploy dist --project-name=musicweb
+```
+
+---
+
+## 方式二：VPS / 自建伺服器（完整功能）
+
+### 你需要
+
+- 一臺 Linux 伺服器（VPS），推薦 Ubuntu 22.04 / 20.04
+- SSH 登入權限
+- 一個域名（可选，但建議有——用 HTTPS）
+
+### 第一步：伺服器基本準備
+
+SSH 登入你的 VPS：
+
+```bash
+ssh root@你的伺服器IP
+```
+
+然後安裝基本工具：
+
+```bash
+# 更新系統
+apt update && apt upgrade -y
+
+# 安裝 Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+
+# 安裝 pnpm 和 nginx
+npm install -g pnpm
+apt install -y nginx
+
+# 確認安裝成功
+node -v        # 應該顯示 v20.x
+pnpm -v        # 應該顯示 8.x 或更高
+nginx -v       # 應該顯示 nginx 版本
+```
+
+### 第二步：準備程式碼
+
+```bash
+# 建立目錄並克隆
+mkdir -p /var/www
+cd /var/www
+git clone https://github.com/whypuss/musicweb.git musicweb
+cd musicweb
+
+# 安裝依賴並編譯
+pnpm install
+pnpm build
+```
+
+編譯完成後，前端檔案在 `packages/web/dist/`。
+
+### 第三步：設定環境變數
+
+```bash
+# 建立環境變數檔案（別人看不到）
+sudo nano /etc/musicweb.env
+```
+
+輸入以下內容，然後按 `Ctrl+O` 儲存、`Ctrl+X` 離開：
+
+```
+AUDIOMACK_SEARCH_CONSUMER_KEY=audiomack-js
+AUDIOMACK_SEARCH_SECRET=你的搜尋secret
+AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-web
+AUDIOMACK_MEDIA_SECRET=你的媒體secret
+```
+
+> ⚠️ **不要留空！** `REPLACE_WITH_YOUR_SECRET` 是占位符，不是真實密碼。如果你沒有自己的 Audiomack OAuth 憑證，搜尋功能會出錯。
+
+設定檔案權限（防止其他人讀取）：
+
+```bash
+sudo chmod 600 /etc/musicweb.env
+```
+
+### 第四步：建立系統服務（讓程式自動運行）
+
+建立服務檔案：
+
+```bash
+sudo nano /etc/systemd/system/musicweb.service
+```
+
+複製貼上以下內容：
 
 ```ini
 [Unit]
@@ -183,17 +180,17 @@ After=network.target
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/var/www/musicweb
+WorkingDirectory=/var/www/musicweb/packages/web
 ExecStart=/usr/bin/node scripts/server.mjs
 Restart=always
 RestartSec=5
-EnvironmentFile=-/etc/musicweb.env
+EnvironmentFile=/etc/musicweb.env
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-> 使用 `EnvironmentFile=/etc/musicweb.env` 單獨存放憑證，避免把 secret 放在 repo 中。
+啟動服務：
 
 ```bash
 sudo systemctl daemon-reload
@@ -201,121 +198,127 @@ sudo systemctl enable --now musicweb
 sudo systemctl status musicweb
 ```
 
-### 驗證
+看到 `active (running)` 就成功了！
+
+> 伺服器現在監聽 **`http://你的IP:8788`**。先不用管，下面配 nginx 會幫你改成正常端口。
+
+### 第五步：設定 Nginx（HTTPS + 反向代理）
+
+如果有域名，先把域名指向你的伺服器 IP（在域名管理後台加一條 A 記錄）。
+
+建立 Nginx 配置：
 
 ```bash
-# 本機測試
-curl http://127.0.0.1:8895/        # 應返回 200 + HTML
-curl http://127.0.0.1:8895/api/search?q=drake
-# 外部測試（用 4G 手機或 VPN，不要從同一台 VPS curl 自己）
-curl https://music.example.com/api/search?q=drake
+sudo nano /etc/nginx/sites-available/musicweb
 ```
 
----
+複製以下配置（**記得改 `server_name` 為你的域名**）：
 
-## 方式二：Cloudflare Pages（免費，僅 Audiomack）
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name music.yourdomain.com;    # ← 改成你的域名
 
-> 適用於只需要 Audiomack 搜尋+播放、不需要全插件系統的使用者。
-> 免費額度：10 萬次請求/天。
+    ssl_certificate     /etc/letsencrypt/live/music.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/music.yourdomain.com/privkey.pem;
 
-### 前置條件
+    root /var/www/musicweb/packages/web/dist;
+    index index.html;
 
-- Cloudflare 帳號
-- Wrangler CLI (`npm install -g wrangler`)
-- 一個已託管在 Cloudflare 的域名
+    # API 請求轉發給後端伺服器
+    location /api/ {
+        proxy_pass http://127.0.0.1:8788;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
 
-### Step 1 — 安裝依賴
+        # 音頻串流需要關閉緩衝
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+
+        # 允許跨域
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+        add_header Access-Control-Allow-Headers "*" always;
+    }
+
+    # 靜態檔案緩存
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # 前端頁面
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+儲存後啟用：
 
 ```bash
-pnpm install
+sudo ln -sf /etc/nginx/sites-available/musicweb /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### Step 2 — 設定 Cloudflare 環境變數
+### 第六步：設定 HTTPS 憑證（免費）
 
 ```bash
-# 登入 Cloudflare
-wrangler login
+# 安裝 certbot
+apt install -y certbot python3-certbot-nginx
 
-# 設定 Pages Functions 使用的 secret（不會出現在 Git 中）
-wrangler secret put AUDIOMACK_OAUTH_SECRET
-wrangler secret put AUDIOMACK_OAUTH_CONSUMER_KEY
+# 申請憑證（會自動修改 nginx 配置）
+sudo certbot --nginx -d music.yourdomain.com
 ```
 
-> `wrangler secret put` 比環境變數更安全——secret 只在 Cloudflare 後端儲存，不會進入部署包。
+按提示輸入 Email，然後選 2（自動重定向 HTTP 到 HTTPS）。
 
-### Step 3 — 部署
+### 完成！
 
-```bash
-cd packages/web
-pnpm build
-wrangler pages deploy dist --project-name=musicweb
-```
-
-部署後會得到一個類似 `https://musicweb.pages.dev` 的網址。
-
-如需自訂域名，在 Cloudflare Dashboard 的 Pages 項目中綁定你的域名。
-
-### 更新部署
-
-修改程式後重新執行 Step 3 即可。
-
----
-
-## 環境變數說明
-
-| 變數名 | 部署方式 | 必填 | 說明 |
-|--------|---------|------|------|
-| `AUDIOMACK_SEARCH_CONSUMER_KEY` | VPS | 否（預設 audiomack-js） | 搜尋 API 的 OAuth Consumer Key |
-| `AUDIOMACK_SEARCH_SECRET` | VPS | 是 | 搜尋 API 的 OAuth Secret |
-| `AUDIOMACK_MEDIA_CONSUMER_KEY` | VPS | 否（預設 audiomack-web） | 媒體 API 的 OAuth Consumer Key |
-| `AUDIOMACK_MEDIA_SECRET` | VPS | 是 | 媒體 API 的 OAuth Secret |
-| `AUDIOMACK_OAUTH_CONSUMER_KEY` | CF Pages | 否 | CF Pages Functions 統一 key |
-| `AUDIOMACK_OAUTH_SECRET` | CF Pages | 是 | CF Pages Functions 統一 secret |
-
-> **如何取得 Audiomack OAuth 憑證？**
-> Audiomack 官方未提供正式开发者申請入口。`audiomack-js` / `audiomack-web` 是其官方網站和官方 App 公開使用的 Consumer Key，對應的 Secret 已透過逆向取得並寫入程式碼。如果你希望更換，請自行逆向 audiomack.com 的最新憑證。
+用瀏覽器訪問 `https://music.yourdomain.com`，開始聽歌！
 
 ---
 
 ## 常見問題
 
-### Q: 搜尋返回 400 Bad Request 或無結果？
+**Q: 搜尋沒有結果，顯示 401 錯誤？**
+A: Audiomack 憑證沒有設定正確。檢查 `/etc/musicweb.env` 或 Cloudflare secrets 是否填了真實的 secret（不能是 `REPLACE_WITH_YOUR_SECRET`）。
 
-檢查 `AUDIOMACK_*_SECRET` 是否正確設定。錯誤的 secret 會導致 OAuth 簽名失敗，Audiomack 返回 401/400。
+**Q: 音頻播放到一半斷了？**
+A: 如果是 VPS 部署，檢查 nginx 配置中的 `proxy_buffering off;` 和 `proxy_read_timeout 60s;` 有沒有設定。
 
-### Q: 播放按鈕沒反應？
+**Q: Cloudflare Pages 能搜尋 YouTube 嗎？**
+A: 不行。Pages 版本只支援 Audiomack。想搜尋 YouTube、猫耳FM 等其他音源，需要 VPS 部署。
 
-自托管模式下，檢查 `/api/play` 是否正常回應。用 `curl http://localhost:8788/api/play?id=<song_id>&platform=Audiomack` 測試。
-
-### Q: 前端顯示但搜尋無結果（Cloudflare Pages）？
-
-Pages 僅支援 Audiomack 搜尋。如果 Audiomack 搜尋無結果，嘗試中文關鍵字以外的英文關鍵字。多音源搜尋需使用自托管模式。
-
-### Q: nginx 反代後音源播放中斷？
-
-確保 nginx 配置中已關閉 `proxy_buffering` 和 `proxy_request_buffering`，並設定足夠的 `proxy_read_timeout`（至少 60s）。
-
-### Q: 如何重構 `node_modules` 被錯誤 commit？
-
-`node_modules/` 曾在早期 commit 中被誤提交。清理方式：
-
+**Q: 怎麼更新程式碼？**
+A:
 ```bash
-git rm -r --cached node_modules/
-git commit -m "chore: remove node_modules from git tracking"
+cd /var/www/musicweb
+git pull
+pnpm build
+sudo systemctl restart musicweb
 ```
 
-`.gitignore` 已包含 `node_modules/`，此後不會再被追蹤。
+**Q: 沒有 Audiomack OAuth 憑證能用嗎？**
+A: 前端頁面能打開，但搜尋和播放 Audiomack 歌曲時會失敗。其他透過後端代理的音源（YouTube 等）也需要各自的憑證。建議至少找到 Audiomack 的 OAuth secret。
 
 ---
 
-## 貢獻
+## 故障排除速查
 
-歡迎提交 Issue 和 Pull Request。提交前請執行：
+| 問題 | 原因 | 解決方法 |
+|------|------|---------|
+| 頁面打不開 | nginx 沒啟動 | `sudo systemctl status nginx` |
+| API 404 | nginx `proxy_pass` 地址錯誤 | 確認是 `http://127.0.0.1:8788` |
+| 搜尋 401 | OAuth 憑證錯誤 | 檢查 `.env` / secrets |
+| 播放中斷 | nginx 緩衝沒關 | 加 `proxy_buffering off;` |
+| HTTPS 不通 | SSL 憑證沒設定 | 跑 `certbot --nginx` |
 
-```bash
-pnpm typecheck
-pnpm build
-```
+---
 
 ## License
 
