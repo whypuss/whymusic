@@ -70,7 +70,7 @@ export default function App() {
   const [lockedItem, setLockedItem] = useState<{ title: string; artist: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend'>('search')
+  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend'>('recommend')
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
