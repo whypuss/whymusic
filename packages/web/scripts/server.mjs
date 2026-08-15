@@ -57,7 +57,7 @@ async function generateSignature(method, baseUrl, params, secret) {
 
 const AUDIOMACK_BASE = 'https://api.audiomack.com/v1'
 
-async function searchAudiomack(keyword, type, page) {
+async function searchAudiomack(keyword, type, page, sort = 'popular') {
   const consumerKey = AUDIOMACK_SEARCH_CONSUMER_KEY
   const secret = AUDIOMACK_SEARCH_SECRET
   const timestamp = String(Math.floor(Date.now() / 1000))
@@ -76,7 +76,7 @@ async function searchAudiomack(keyword, type, page) {
     show: type === 'music' ? 'songs' :
           type === 'album' ? 'albums' :
           type === 'artist' ? 'artists' : 'playlists',
-    sort: 'popular',
+    sort: sort,
   }
 
   const signature = await generateSignature('GET', `${AUDIOMACK_BASE}/search`, params, secret)
@@ -123,6 +123,49 @@ async function searchAudiomack(keyword, type, page) {
       musicList,
     }
   })
+}
+
+// 香港流行曲推薦：用多個歌手/樂隊關鍵字搜尋，熱門/最新兩種排序，去重合併
+const HK_SONG_KEYWORDS = [
+  '陳奕迅', '容祖兒', '張學友', '張國榮', '梅艷芳', '鄭秀文', '許冠傑',
+  '陳慧琳', '謝霆鋒', '楊千嬅', '李克勤', '古巨基', 'Beyond', '草蜢',
+  '王菲', '劉德華', '郭富城', '黎明', 'Twins', '張敬軒',
+]
+
+async function recommendAudiomack(mode = 'hot', limit = 40) {
+  const sort = mode === 'new' ? 'recent' : 'popular'
+  // 併發搜尋所有香港歌手/樂隊關鍵字
+  const results = await Promise.allSettled(
+    HK_SONG_KEYWORDS.map(kw => searchAudiomack(kw, 'music', 1, sort)),
+  )
+  const buckets = results.map(r => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []))
+  // 輪流交替取每個關鍵字的歌（每源各取 1 首），避免單一歌手灌滿
+  const seen = new Set()
+  const merged = []
+  const maxLen = Math.max(...buckets.map(b => b.length), 0)
+  for (let idx = 0; idx < maxLen && merged.length < limit; idx++) {
+    for (const bucket of buckets) {
+      const item = bucket[idx]
+      if (!item) continue
+      const title = (item.title || '').trim()
+      const artist = (item.artist || '').trim()
+      if (!title) continue
+      const key = `${title}::${artist}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push({
+        id: String(item.id),
+        title,
+        artist,
+        artwork: item.artwork || '',
+        platform: 'Audiomack',
+        duration: item.duration || 0,
+        type: 'music',
+      })
+      if (merged.length >= limit) break
+    }
+  }
+  return merged
 }
 
 /**
@@ -283,6 +326,21 @@ const server = http.createServer(async (req, res) => {
       }
       const results = await searchAudiomack(keyword, type, page)
       jsonResponse(res, results)
+      return
+    }
+
+    // ── API: /api/recommend ───────────────────────────────
+    // 推薦香港流行曲：hot=熱門、new=最新
+    if (pathname === '/api/recommend') {
+      const mode = url.searchParams.get('mode') || 'hot'
+      const limit = parseInt(url.searchParams.get('limit') || '40', 10)
+      try {
+        const results = await recommendAudiomack(mode, limit)
+        jsonResponse(res, { mode, data: results })
+      } catch (err) {
+        console.error('[recommend] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
       return
     }
 

@@ -75,13 +75,17 @@ export default function App() {
   })
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [currentView, setCurrentView] = useState<'search' | 'plugins'>('search')
+  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend'>('search')
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
+  // 推薦頁
+  const [recommendMode, setRecommendMode] = useState<'new' | 'hot'>('new')
+  const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
+  const [recommendLoading, setRecommendLoading] = useState(false)
   // 專輯/歌單詳情頁
   const [albumDetail, setAlbumDetail] = useState<MusicItem | null>(null)
   const [albumTracks, setAlbumTracks] = useState<MusicItem[]>([])
@@ -110,6 +114,14 @@ export default function App() {
     } catch { /* ignore */ }
   }, [lockedIds])
 
+  // 進入推薦頁時自動載入
+  useEffect(() => {
+    if (currentView === 'recommend' && recommendSongs.length === 0) {
+      loadRecommend(recommendMode)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView])
+
   // 將鎖定歌曲加入集合（並同步過濾列表）
   const markLocked = useCallback((id: string) => {
     setLockedIds(prev => {
@@ -120,6 +132,7 @@ export default function App() {
     })
     setResults(prev => prev.filter(x => String(x.id) !== id))
     setAlbumTracks(prev => prev.filter(x => String(x.id) !== id))
+    setRecommendSongs(prev => prev.filter(x => String(x.id) !== id))
   }, [])
 
   useEffect(() => {
@@ -344,6 +357,35 @@ export default function App() {
     const nextPage = searchPage + 1
     setSearchPage(nextPage)
     await search(nextPage, true)
+  }
+
+  // 載入推薦香港流行曲（最新/熱門）
+  const loadRecommend = useCallback(async (mode: 'new' | 'hot') => {
+    setRecommendMode(mode)
+    setRecommendLoading(true)
+    try {
+      const response = await fetch(`/api/recommend?mode=${mode}&limit=40`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.error || `HTTP ${response.status}`)
+      }
+      const data = await response.json()
+      const songs: MusicItem[] = Array.isArray(data) ? data : (data?.data || [])
+      // 過濾已鎖定（受保護）歌曲
+      setRecommendSongs(songs.filter(s => !lockedIds.has(String(s.id))))
+    } catch (e) {
+      console.error('Load recommend failed:', e)
+      setRecommendSongs([])
+      showNotification(`載入推薦失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setRecommendLoading(false)
+    }
+  }, [lockedIds])
+
+  // 切換推薦分頁
+  const switchRecommendMode = (mode: 'new' | 'hot') => {
+    if (mode === recommendMode && recommendSongs.length > 0) return
+    loadRecommend(mode)
   }
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
@@ -666,6 +708,75 @@ export default function App() {
             </div>
           )}
 
+          {currentView === 'recommend' && (
+            <div className="max-w-2xl mx-auto">
+              {/* 分頁：最新 / 熱門 */}
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">推薦香港流行曲</h2>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => switchRecommendMode('new')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
+                      recommendMode === 'new' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    最新
+                  </button>
+                  <button
+                    onClick={() => switchRecommendMode('hot')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
+                      recommendMode === 'hot' ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'
+                    }`}
+                  >
+                    熱門
+                  </button>
+                </div>
+              </div>
+
+              {recommendLoading && recommendSongs.length === 0 && (
+                <div className="text-center text-gray-500 py-10">載入中...</div>
+              )}
+              {!recommendLoading &&
+                recommendSongs.length === 0 &&
+                currentView === 'recommend' && (
+                  <div className="text-center text-gray-500 py-10">尚無推薦歌曲。</div>
+              )}
+              <div className="space-y-2">
+                {recommendSongs
+                  .filter(item => !lockedIds.has(String(item.id)))
+                  .map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
+                      onClick={() => handleItemClick(item)}
+                    >
+                      <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
+                        {playingItem?.id === item.id && isPlaying ? (
+                          <span className="text-white font-bold text-xs">♪</span>
+                        ) : (
+                          <span className="text-white font-bold">{(item.title || '♪')[0]}</span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{item.title || '未知歌曲'}</div>
+                        <div className="text-sm text-gray-400 truncate">{item.artist || '未知藝術家'}</div>
+                      </div>
+                      <div className="text-sm text-gray-500 flex-shrink-0">{item.platform || '未知'}</div>
+                      {(!item.type || item.type === 'music') && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownload(item) }}
+                          title="下載歌曲"
+                          className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 rounded flex-shrink-0 transition"
+                        >
+                          ⬇
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
           {currentView === 'plugins' && (
             <div className="max-w-2xl mx-auto">
               <h2 className="text-xl font-bold mb-4">插件管理</h2>
@@ -804,6 +915,13 @@ export default function App() {
 
       {/* Bottom Nav */}
       <div className="bg-gray-900 border-t border-gray-800 flex">
+        <button
+          className="flex-1 flex items-center justify-center gap-2 py-3"
+          style={{ color: currentView === 'recommend' ? '#3b82f6' : '#6b7280' }}
+          onClick={() => setCurrentView('recommend')}
+        >
+          <span className="text-sm">推薦</span>
+        </button>
         <button
           className="flex-1 flex items-center justify-center gap-2 py-3"
           style={{ color: currentView === 'search' ? '#3b82f6' : '#6b7280' }}
