@@ -9,10 +9,12 @@
 // wrangler secret / server .env). Defaults shown are Audiomack's
 // public example credentials — replace with your own in production.
 const API_BASE = 'https://api.audiomack.com/v1'
+// 使用 Audiomack 官方公開的 consumer key/secret（MusicFree 原版插件同款）。
+// 可用環境變量覆蓋。
 const OAUTH_CONSUMER_KEY =
   process.env.AUDIOMACK_OAUTH_CONSUMER_KEY || 'audiomack-js'
 const OAUTH_SECRET =
-  process.env.AUDIOMACK_OAUTH_SECRET || 'REPLACE_WITH_YOUR_SECRET'
+  process.env.AUDIOMACK_OAUTH_SECRET || 'f3ac5b086f3eab260520d8e3049561e6'
 const OAUTH_VERSION = '1.0'
 const OAUTH_METHOD = 'HMAC-SHA1'
 
@@ -104,14 +106,33 @@ async function searchAudiomack(keyword, page, type) {
   }
 
   const data = await response.json()
-  return (data.results || []).map(item => ({
-    id: item.id || '',
-    title: item.title || '',
-    artist: item.artist || '',
-    artwork: item.artwork_url || item.cover_url || '',
-    platform: 'Audiomack',
-    duration: item.duration || 0,
-  }))
+  return (data.results || []).map(item => {
+    const artistObj = item.artist || ''
+    let musicList = []
+    if ((type === 'album' || type === 'sheet') && item.tracks && typeof item.tracks === 'object') {
+      const trackArray = Object.values(item.tracks)
+      musicList = trackArray.map((t) => ({
+        id: t.song_id || t.id || item.id,
+        title: t.title || '',
+        artist: t.artist || item.artistName || item.uploader || '',
+        artwork: t.cover_url || t.artwork_url || item.image_base || item.image || '',
+        duration: parseInt(t.duration, 10) || 0,
+        platform: 'Audiomack',
+        type: 'music',
+      }))
+    }
+    return {
+      id: item.id || '',
+      title: item.title || '',
+      artist: typeof artistObj === 'string' ? artistObj : (artistObj.name || ''),
+      artwork: item.image || item.image_base || item.artwork_url || item.cover_url || '',
+      platform: 'Audiomack',
+      duration: item.duration || 0,
+      url_slug: item.url_slug || '',
+      type: type === 'album' ? 'album' : (type === 'sheet' ? 'sheet' : (type === 'artist' ? 'artist' : 'music')),
+      musicList,
+    }
+  })
 }
 
 export async function onRequest({ request }) {

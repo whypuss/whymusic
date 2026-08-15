@@ -195,6 +195,34 @@ export default function App() {
     }
   }, [keyword, searchType, pluginManager])
 
+  const handleDownload = async (item: MusicItem) => {
+    const platform = item.platform || ''
+    try {
+      const url = `/api/download?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}&title=${encodeURIComponent(item.title || 'song')}&artist=${encodeURIComponent(item.artist || '')}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.error || `HTTP ${response.status}`)
+      }
+      const contentType = response.headers.get('content-type') || ''
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      const cd = response.headers.get('content-disposition') || ''
+      const matchStar = cd.match(/filename\*=UTF-8''([^;]+)/i)
+      const match = cd.match(/filename="([^"]+)"/)
+      link.download = matchStar ? decodeURIComponent(matchStar[1]) : match ? match[1] : `${item.title || 'song'}.${contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'}`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(blobUrl)
+    } catch (e) {
+      console.error('Download failed:', e)
+      showNotification(`下載失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
+  }
+
   const showNotification = (message: string, type: 'success' | 'error') => {
     setNotification({ message, type })
     setTimeout(() => setNotification(null), 3000)
@@ -505,6 +533,13 @@ export default function App() {
                           <div className="text-sm text-gray-400 truncate">{track.artist || '未知藝術家'}</div>
                         </div>
                         <div className="text-sm text-gray-500 flex-shrink-0">{track.platform || '未知'}</div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDownload(track) }}
+                          title="下載歌曲"
+                          className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 rounded flex-shrink-0 transition"
+                        >
+                          ⬇
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -528,8 +563,6 @@ export default function App() {
                     >
                       <option value="music">歌曲</option>
                       <option value="album">專輯</option>
-                      <option value="sheet">歌單</option>
-                      <option value="artist">歌手</option>
                     </select>
                     <button
                       onClick={() => { setSearchPage(1); search(1) }}
@@ -572,6 +605,15 @@ export default function App() {
                           </div>
                         )}
                         <div className="text-sm text-gray-500 flex-shrink-0">{item.platform || '未知'}</div>
+                        {(!item.type || item.type === 'music') && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDownload(item) }}
+                            title="下載歌曲"
+                            className="px-2 py-1 text-xs bg-green-600 hover:bg-green-700 rounded flex-shrink-0 transition"
+                          >
+                            ⬇
+                          </button>
+                        )}
                       </div>
                     ))}
                     {/* 載入更多按鈕 */}

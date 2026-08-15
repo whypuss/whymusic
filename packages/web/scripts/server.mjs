@@ -16,14 +16,16 @@ const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
 // ── OAuth 1.0 Configuration ────────────────────────────────────────
 // Load from environment variables. Defaults are Audiomack's public
 // example credentials — replace in production via .env or env vars.
+// 使用 Audiomack 官方公開的 consumer key/secret（MusicFree 原版插件同款）。
+// 可用環境變量覆蓋。
 const AUDIOMACK_SEARCH_CONSUMER_KEY =
   process.env.AUDIOMACK_SEARCH_CONSUMER_KEY || 'audiomack-js'
 const AUDIOMACK_SEARCH_SECRET =
-  process.env.AUDIOMACK_SEARCH_SECRET || 'REPLACE_WITH_YOUR_SECRET'
+  process.env.AUDIOMACK_SEARCH_SECRET || 'f3ac5b086f3eab260520d8e3049561e6'
 const AUDIOMACK_MEDIA_CONSUMER_KEY =
-  process.env.AUDIOMACK_MEDIA_CONSUMER_KEY || 'audiomack-web'
+  process.env.AUDIOMACK_MEDIA_CONSUMER_KEY || 'audiomack-js'
 const AUDIOMACK_MEDIA_SECRET =
-  process.env.AUDIOMACK_MEDIA_SECRET || 'REPLACE_WITH_YOUR_SECRET'
+  process.env.AUDIOMACK_MEDIA_SECRET || 'f3ac5b086f3eab260520d8e3049561e6'
 
 // ── OAuth 1.0 helpers (Audiomack) ──────────────────────────────────
 
@@ -96,29 +98,28 @@ async function searchAudiomack(keyword, type, page) {
   const data = await response.json()
   return (data.results || []).map(item => {
     const artistObj = item.artist || ''
-    // 專輯/歌單結果：Audiomack search API 直接返回 tracks（數字索引 object）
-    let musicList = []
-    if ((type === 'album' || type === 'sheet') && item.tracks && typeof item.tracks === 'object') {
-      const trackArray = Object.values(item.tracks)
-      musicList = trackArray.map((t, i) => ({
-        id: t.song_id || t.id || `${item.id}-track-${i}`,
-        title: t.title || '',
-        artist: t.artist || item.artistName || item.uploader || '',
-        artwork: t.cover_url || t.artwork_url || item.image_base || item.image || '',
-        duration: parseInt(t.duration, 10) || 0,
-        platform: 'Audiomack',
-        type: 'music',
-      }))
-    }
+    // 專輯/歌單結果：Audiomack search API 直接返回 tracks
+    const trackArray = (type === 'album' || type === 'sheet') && item.tracks
+      ? (Array.isArray(item.tracks) ? item.tracks : Object.values(item.tracks))
+      : []
+    const musicList = trackArray.map((t, i) => ({
+      id: t.song_id || t.id || `${item.id}-track-${i}`,
+      title: t.title || '',
+      artist: t.artist || item.artistName || item.uploader || '',
+      artwork: t.cover_url || t.artwork_url || item.image_base || item.image || '',
+      duration: parseInt(t.duration, 10) || 0,
+      platform: 'Audiomack',
+      type: 'music',
+    })).filter(t => t.title)
     return {
       id: item.id || '',
-      title: item.title || '',
-      artist: typeof artistObj === 'string' ? artistObj : (artistObj.name || ''),
+      title: item.title || (item.name || ''),
+      artist: typeof artistObj === 'string' ? artistObj : (artistObj.name || item.artistName || item.uploader || ''),
       artwork: item.image || item.image_base || item.artwork_url || item.cover_url || '',
       platform: 'Audiomack',
       duration: item.duration || 0,
       url_slug: item.url_slug || '',
-      type: type === 'album' ? 'album' : type === 'sheet' ? 'sheet' : 'music',
+      type: type === 'album' ? 'album' : type === 'sheet' ? 'sheet' : (type === 'artist' ? 'artist' : 'music'),
       musicList,
     }
   })
@@ -300,6 +301,90 @@ const server = http.createServer(async (req, res) => {
       const result = await getAudiomackMedia(songId)
       jsonResponse(res, { url: result })
       return
+    }
+
+    // ── API: /api/download ───────────────────────────────
+    // 下載歌曲：取得簽名音源 URL，伺服器串流回傳並設為附件下載
+    if (pathname === '/api/download') {
+      const songId = url.searchParams.get('id')
+      const platform = url.searchParams.get('platform') || 'Audiomack'
+      const fileTitle = url.searchParams.get('title') || 'song'
+      const fileArtist = url.searchParams.get('artist') || ''
+      if (!songId) {
+        jsonResponse(res, { error: 'Missing id parameter' }, 400)
+        return
+      }
+      if (platform !== 'Audiomack') {
+        jsonResponse(res, { error: `Platform not supported: ${platform}` }, 400)
+        return
+      }
+      let mediaUrl
+      try {
+        mediaUrl = await getAudiomackMedia(songId)
+      } catch (err) {
+        console.error(`[download] Failed for ${songId}:`, err.message)
+        jsonResponse(res, { error: `Failed to get media: ${err.message}` }, 500)
+        return
+      }
+      if (!mediaUrl) {
+        jsonResponse(res, { error: 'No media URL returned' }, 404)
+        return
+      }
+
+      // 串流下載音頻
+      try {
+        const audioReq = await fetch(mediaUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept': '*/*',
+          },
+        })
+        if (!audioReq.ok) {
+          jsonResponse(res, { error: `Audio fetch failed: ${audioReq.status}` }, audioReq.status)
+          return
+        }
+        const contentType = audioReq.headers.get('content-type') || 'audio/mpeg'
+        const ext = contentType.includes('mp4') ? 'm4a' : contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'mp3'
+        const safeTitle = (fileTitle || 'song').replace(/[\\/:*?"<>|]/g, '_').trim()
+        const safeArtist = (fileArtist || '').replace(/[\\/:*?"<>|]/g, '_').trim()
+        const filename = safeArtist ? `${safeArtist} - ${safeTitle}.${ext}` : `${safeTitle}.${ext}`
+        // 中文/非 ASCII 檔名需 RFC 5987 編碼，否則 Node 拒絕設定 header
+        const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_')
+
+        const headers = { ...corsHeaders() }
+        headers['Content-Type'] = contentType
+        headers['Content-Disposition'] = `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        const cl = audioReq.headers.get('content-length')
+        if (cl) headers['Content-Length'] = cl
+
+        res.writeHead(200, headers)
+        const reader = audioReq.body?.getReader()
+        if (reader) {
+          const pump = async () => {
+            try {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) { res.end(); return }
+                if (!res.write(Buffer.from(value))) {
+                  res.once('drain', pump)
+                  return
+                }
+              }
+            } catch {
+              res.end()
+            }
+          }
+          pump()
+        } else {
+          const buf = await audioReq.arrayBuffer()
+          res.end(Buffer.from(buf))
+        }
+        return
+      } catch (err) {
+        console.error(`[download] Stream error for ${songId}:`, err.message)
+        jsonResponse(res, { error: `Stream error: ${err.message}` }, 500)
+        return
+      }
     }
 
     // ── API: /api/album ──────────────────────────────────

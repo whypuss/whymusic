@@ -89,7 +89,7 @@ u.prototype = {
         return this._parameters;
     },
 };
-function getSignature(method, urlPath, params, secret = "REPLACE_WITH_YOUR_AUDIOMACK_SECRET") {
+function getSignature(method, urlPath, params, secret = "f3ac5b086f3eab260520d8e3049561e6") {
     // NOTE: OAuth secret cannot be injected at runtime in browser plugins.
     // Options:
     //   1) Replace this value with your real Audiomack OAuth secret.

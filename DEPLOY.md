@@ -54,18 +54,18 @@ wrangler login
 
 ### 第四步：設定 Audiomack 憑證
 
-Audiomack 的搜尋功能需要 OAuth 憑證。程式碼內建了占位符，需要你自己填：
+Audiomack 的搜尋功能需要 OAuth 憑證。程式碼預設使用 Audiomack 官方公開的 consumer key/secret（`audiomack-js` / `f3ac5b086f3eab260520d8e3049561e6`，與 MusicFree 原版插件一致），**開箱即用，無需額外設定**。如果想用自己的憑證，再覆蓋：
 
 ```bash
 cd packages/web
 
-# 設定搜尋憑證（按提示輸入）
+# 設定搜尋憑證（按提示輸入，可選）
 wrangler secret put AUDIOMACK_OAUTH_CONSUMER_KEY
 wrangler secret put AUDIOMACK_OAUTH_SECRET
 ```
 
 > **Consumer Key 填 `audiomack-js`**（Audiomack 官方 App 使用的公開 Key）。
-> **Secret** 需要從 audiomack.com 取得——程式碼裡的占位符 `"REPLACE_WITH_YOUR_AUDIOMACK_SECRET"` 不能直接用。如果沒有自己的 secret，Audiomack 搜尋功能會返回 401 錯誤。
+> **Secret 填 `f3ac5b086f3eab260520d8e3049561e6`**（Audiomack 官方公開 secret，MusicFree 原版插件同款）。
 
 ### 第五步：部署
 
@@ -149,12 +149,12 @@ sudo nano /etc/musicweb.env
 
 ```
 AUDIOMACK_SEARCH_CONSUMER_KEY=audiomack-js
-AUDIOMACK_SEARCH_SECRET=你的搜尋secret
-AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-web
-AUDIOMACK_MEDIA_SECRET=你的媒體secret
+AUDIOMACK_SEARCH_SECRET=f3ac5b086f3eab260520d8e3049561e6
+AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-js
+AUDIOMACK_MEDIA_SECRET=f3ac5b086f3eab260520d8e3049561e6
 ```
 
-> ⚠️ **不要留空！** `REPLACE_WITH_YOUR_SECRET` 是占位符，不是真實密碼。如果你沒有自己的 Audiomack OAuth 憑證，搜尋功能會出錯。
+> 以上是 Audiomack 官方公開的 consumer key/secret（MusicFree 原版插件同款），可直接使用。如果想用自己的 Audiomack App 憑證，覆蓋即可。
 
 設定檔案權限（防止其他人讀取）：
 
@@ -286,7 +286,7 @@ sudo certbot --nginx -d music.yourdomain.com
 ## 常見問題
 
 **Q: 搜尋沒有結果，顯示 401 錯誤？**
-A: Audiomack 憑證沒有設定正確。檢查 `/etc/musicweb.env` 或 Cloudflare secrets 是否填了真實的 secret（不能是 `REPLACE_WITH_YOUR_SECRET`）。
+A: Audiomack 憑證沒有設定正確。檢查 `/etc/musicweb.env` 或 Cloudflare secrets 是否填了正確的 secret（應為 `f3ac5b086f3eab260520d8e3049561e6`）。
 
 **Q: 音頻播放到一半斷了？**
 A: 如果是 VPS 部署，檢查 nginx 配置中的 `proxy_buffering off;` 和 `proxy_read_timeout 60s;` 有沒有設定。
