@@ -309,7 +309,6 @@ const server = http.createServer(async (req, res) => {
       const songId = url.searchParams.get('id')
       const platform = url.searchParams.get('platform') || 'Audiomack'
       const fileTitle = url.searchParams.get('title') || 'song'
-      const fileArtist = url.searchParams.get('artist') || ''
       if (!songId) {
         jsonResponse(res, { error: 'Missing id parameter' }, 400)
         return
@@ -346,8 +345,7 @@ const server = http.createServer(async (req, res) => {
         const contentType = audioReq.headers.get('content-type') || 'audio/mpeg'
         const ext = contentType.includes('mp4') ? 'm4a' : contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'mp3'
         const safeTitle = (fileTitle || 'song').replace(/[\\/:*?"<>|]/g, '_').trim()
-        const safeArtist = (fileArtist || '').replace(/[\\/:*?"<>|]/g, '_').trim()
-        const filename = safeArtist ? `${safeArtist} - ${safeTitle}.${ext}` : `${safeTitle}.${ext}`
+        const filename = safeTitle ? `${safeTitle}.${ext}` : `song.${ext}`
         // 中文/非 ASCII 檔名需 RFC 5987 編碼，否則 Node 拒絕設定 header
         const asciiFilename = filename.replace(/[^\x20-\x7E]/g, '_')
 

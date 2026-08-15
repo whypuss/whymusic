@@ -69,7 +69,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'store'>('search')
+  const [currentView, setCurrentView] = useState<'search' | 'plugins'>('search')
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
@@ -82,7 +82,6 @@ export default function App() {
   const [albumLoading, setAlbumLoading] = useState(false)
 
   // 依賴 pluginKey 來觸發重渲染
-  const installedNames = useMemo(() => new Set(pluginManager.getPlugins().map(p => p.name)), [pluginKey])
 
   useEffect(() => {
     const initializeState = async () => {
@@ -209,10 +208,9 @@ export default function App() {
       const blobUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = blobUrl
-      const cd = response.headers.get('content-disposition') || ''
-      const matchStar = cd.match(/filename\*=UTF-8''([^;]+)/i)
-      const match = cd.match(/filename="([^"]+)"/)
-      link.download = matchStar ? decodeURIComponent(matchStar[1]) : match ? match[1] : `${item.title || 'song'}.${contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'}`
+      const ext = contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'
+      const safeName = (item.title || 'song').replace(/[\\/:*?"<>|]/g, '_').trim() || 'song'
+      link.download = `${safeName}.${ext}`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -397,28 +395,7 @@ export default function App() {
     }
   }
 
-  const installOfficialPlugin = async (plugin: { name: string; code: string }) => {
-    if (pluginManager.getPlugin(plugin.name)) {
-      showNotification(`插件 "${plugin.name}" 已安裝`, 'success')
-      return
-    }
-    try {
-      setLoading(true)
-      pluginManager.loadPlugin(plugin.code, plugin.name)
-      pluginManager.setPluginEnabled(plugin.name, true)
-      savePluginCode(plugin.name, plugin.code)
-      setPluginToggles(prev => ({ ...prev, [plugin.name]: true }))
-      setPluginKey(k => k + 1)
-      showNotification(`插件 "${plugin.name}" 已安裝`, 'success')
-      savePluginsToStorage()
-    } catch (e) {
-      console.error('Install error:', e)
-      showNotification(`插件 "${plugin.name}" 安裝失敗: ${e}`, 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  // 依賴 pluginKey 來觸發重渲染，確保官方插件狀態正確
   const removePlugin = (name: string) => {
     pluginManager.removePlugin(name)
     setPluginToggles(prev => {
@@ -638,8 +615,79 @@ export default function App() {
             <div className="max-w-2xl mx-auto">
               <h2 className="text-xl font-bold mb-4">插件管理</h2>
 
-              {/* Add Plugin */}
-              <div className="bg-gray-800 rounded-lg p-4 mb-4">
+              {/* 官方插件（默認啟用） */}
+              <div className="mb-4">
+                <div className="text-sm text-gray-400 mb-2">官方插件</div>
+                <div className="space-y-2">
+                  {OFFICIAL_PLUGINS.map((p) => (
+                    <div key={p.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                      <div>
+                        <div className="font-medium">{p.name}</div>
+                        <div className="text-sm text-gray-400">v{pluginManager.getPlugin(p.name)?.version || '官方插件'}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {(() => {
+                          const enabled = pluginToggles[p.name] !== false
+                          return (
+                            <button
+                              onClick={() => togglePlugin(p.name)}
+                              className={`px-3 py-1 rounded text-sm ${
+                                enabled
+                                  ? 'bg-green-600 hover:bg-green-700'
+                                  : 'bg-gray-600 hover:bg-gray-700'
+                              }`}
+                            >
+                              {enabled ? '已啟用' : '已禁用'}
+                            </button>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 第三方插件 */}
+              <div className="mb-4">
+                <div className="text-sm text-gray-400 mb-2">第三方插件</div>
+                <div className="space-y-2">
+                  {pluginManager.getPlugins()
+                    .filter((plugin) => !OFFICIAL_PLUGINS.some(o => o.name === plugin.name))
+                    .map((plugin) => (
+                      <div key={plugin.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
+                        <div>
+                          <div className="font-medium">{plugin.name}</div>
+                          <div className="text-sm text-gray-400">v{plugin.version}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => togglePlugin(plugin.name)}
+                            className={`px-3 py-1 rounded text-sm ${
+                              pluginToggles[plugin.name] === false
+                                ? 'bg-gray-600 hover:bg-gray-700'
+                                : 'bg-green-600 hover:bg-green-700'
+                            }`}
+                          >
+                            {pluginToggles[plugin.name] === false ? '已禁用' : '已啟用'}
+                          </button>
+                          <button
+                            onClick={() => removePlugin(plugin.name)}
+                            className="px-3 py-1 rounded text-sm bg-red-600 hover:bg-red-700"
+                          >
+                            移除
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  {pluginManager.getPlugins().filter((plugin) => !OFFICIAL_PLUGINS.some(o => o.name === plugin.name)).length === 0 && (
+                    <div className="text-sm text-gray-500 py-4 text-center">尚無第三方插件</div>
+                  )}
+                </div>
+              </div>
+
+              {/* 新增插件 */}
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="font-medium mb-2">新增插件</div>
                 <div className="space-y-2">
                   <input
                     type="text"
@@ -663,64 +711,6 @@ export default function App() {
                     {loading ? '安裝中...' : '安裝插件'}
                   </button>
                 </div>
-              </div>
-
-              {/* Plugin List */}
-              <div className="space-y-2">
-                {pluginManager.getPlugins().map((plugin) => (
-                  <div key={plugin.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
-                    <div>
-                      <div className="font-medium">{plugin.name}</div>
-                      <div className="text-sm text-gray-400">v{plugin.version}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => togglePlugin(plugin.name)}
-                        className={`px-3 py-1 rounded text-sm ${
-                          pluginToggles[plugin.name] === false
-                            ? 'bg-gray-600 hover:bg-gray-700'
-                            : 'bg-green-600 hover:bg-green-700'
-                        }`}
-                      >
-                        {pluginToggles[plugin.name] === false ? '禁用' : '啟用'}
-                      </button>
-                      <button
-                        onClick={() => removePlugin(plugin.name)}
-                        className="px-3 py-1 rounded text-sm bg-red-600 hover:bg-red-700"
-                      >
-                        移除
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {currentView === 'store' && (
-            <div className="max-w-2xl mx-auto">
-              <h2 className="text-xl font-bold mb-4">插件商店</h2>
-              <p className="text-sm text-gray-400 mb-4">點擊安裝官方插件，安裝後可在插件管理中啟用/禁用</p>
-              <div className="space-y-2">
-                {OFFICIAL_PLUGINS.map((p) => (
-                  <div key={p.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
-                    <div>
-                      <div className="font-medium">{p.name}</div>
-                      <div className="text-sm text-gray-400">官方插件</div>
-                    </div>
-                    <button
-                      onClick={() => installOfficialPlugin(p)}
-                      disabled={installedNames.has(p.name) || loading}
-                      className={`px-3 py-1 rounded text-sm ${
-                        installedNames.has(p.name)
-                          ? 'bg-gray-600 cursor-not-allowed'
-                          : 'bg-green-600 hover:bg-green-700'
-                      }`}
-                    >
-                      {installedNames.has(p.name) ? '已安裝' : '安裝'}
-                    </button>
-                  </div>
-                ))}
               </div>
             </div>
           )}
@@ -765,13 +755,6 @@ export default function App() {
           onClick={() => setCurrentView('search')}
         >
           <span className="text-sm">搜索</span>
-        </button>
-        <button
-          className="flex-1 flex items-center justify-center gap-2 py-3"
-          style={{ color: currentView === 'store' ? '#3b82f6' : '#6b7280' }}
-          onClick={() => setCurrentView('store')}
-        >
-          <span className="text-sm">商店</span>
         </button>
         <button
           className="flex-1 flex items-center justify-center gap-2 py-3"
