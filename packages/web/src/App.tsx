@@ -67,6 +67,12 @@ export default function App() {
   const [pluginUrl, setPluginUrl] = useState('')
   const [pluginName, setPluginName] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [lockedIds, setLockedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('musicweb-locked-ids')
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>()
+    } catch { return new Set<string>() }
+  })
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [currentView, setCurrentView] = useState<'search' | 'plugins'>('search')
@@ -95,6 +101,25 @@ export default function App() {
       setPluginKey(k => k + 1)
     }
     initializeState()
+  }, [])
+
+  // 持久化鎖定歌曲 ID（Audiomack 受保護曲目）
+  useEffect(() => {
+    try {
+      localStorage.setItem('musicweb-locked-ids', JSON.stringify(Array.from(lockedIds)))
+    } catch { /* ignore */ }
+  }, [lockedIds])
+
+  // 將鎖定歌曲加入集合（並同步過濾列表）
+  const markLocked = useCallback((id: string) => {
+    setLockedIds(prev => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    setResults(prev => prev.filter(x => String(x.id) !== id))
+    setAlbumTracks(prev => prev.filter(x => String(x.id) !== id))
   }, [])
 
   useEffect(() => {
@@ -175,6 +200,11 @@ export default function App() {
         setResults(newResults)
       }
       
+      // 過濾已鎖定的歌曲（Audiomack 受保護/地區鎖定曲目無法下載，隱藏起來）
+      if (lockedIds.size > 0) {
+        setResults(prev => prev.filter(item => !lockedIds.has(String(item.id))))
+      }
+      
       // 判斷是否還有更多結果（每頁結果少於預期 → 沒有更多了）
       if (newResults.length < 20) {
         setHasMore(false)
@@ -217,7 +247,14 @@ export default function App() {
       URL.revokeObjectURL(blobUrl)
     } catch (e) {
       console.error('Download failed:', e)
-      showNotification(`下載失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      const msg = e instanceof Error ? e.message : String(e)
+      // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 從列表移除隱藏
+      if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
+        markLocked(String(item.id))
+        showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+        return
+      }
+      showNotification(`下載失敗: ${msg}`, 'error')
     }
   }
 
@@ -285,7 +322,16 @@ export default function App() {
       setIsPlaying(true)
     } catch (e: any) {
       console.error('Get media source error:', e)
-      showNotification(`播放失敗: ${e.message || e}`, 'error')
+      const errMsg = e?.message || e || ''
+      // Audiomack 受保護內容：播放也無法取得音源 → 隱藏
+      if (/Not authorized|1005/i.test(String(errMsg)) || /Failed to get media/i.test(String(errMsg))) {
+        if (!(item as any)._albumDetail) {
+          markLocked(String(item.id))
+          showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+          return
+        }
+      }
+      showNotification(`播放失敗: ${String(errMsg)}`, 'error')
     }
   }
 
@@ -334,7 +380,12 @@ export default function App() {
       if (response.ok) {
         const data = await response.json()
         if (Array.isArray(data)) {
-          setAlbumTracks(data)
+          // 過濾已鎖定的歌曲
+          if (lockedIds.size > 0) {
+            setAlbumTracks(data.filter((t: MusicItem) => !lockedIds.has(String(t.id))))
+          } else {
+            setAlbumTracks(data)
+          }
         } else {
           setErrorMessage(`載入專輯失敗: ${data.error || '未知錯誤'}`)
         }
@@ -488,7 +539,9 @@ export default function App() {
                     {!albumLoading && albumTracks.length === 0 && (
                       <div className="text-center text-gray-500 py-8">無歌曲數據</div>
                     )}
-                    {albumTracks.map((track, idx) => (
+                    {albumTracks
+                      .filter(track => !lockedIds.has(String(track.id)))
+                      .map((track, idx) => (
                       <div
                         key={track.id}
                         className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
@@ -559,7 +612,9 @@ export default function App() {
                           : '未找到結果。'}
                       </div>
                     )}
-                    {results.map((item) => (
+                    {results
+                      .filter(item => !lockedIds.has(String(item.id)))
+                      .map((item) => (
                       <div
                         key={item.id}
                         className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
