@@ -67,12 +67,7 @@ export default function App() {
   const [pluginUrl, setPluginUrl] = useState('')
   const [pluginName, setPluginName] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [lockedIds, setLockedIds] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('musicweb-locked-ids')
-      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>()
-    } catch { return new Set<string>() }
-  })
+  const [lockedItem, setLockedItem] = useState<{ title: string; artist: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend'>('search')
@@ -107,13 +102,6 @@ export default function App() {
     initializeState()
   }, [])
 
-  // 持久化鎖定歌曲 ID（Audiomack 受保護曲目）
-  useEffect(() => {
-    try {
-      localStorage.setItem('musicweb-locked-ids', JSON.stringify(Array.from(lockedIds)))
-    } catch { /* ignore */ }
-  }, [lockedIds])
-
   // 進入推薦頁時自動載入
   useEffect(() => {
     if (currentView === 'recommend' && recommendSongs.length === 0) {
@@ -121,19 +109,6 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView])
-
-  // 將鎖定歌曲加入集合（並同步過濾列表）
-  const markLocked = useCallback((id: string) => {
-    setLockedIds(prev => {
-      if (prev.has(id)) return prev
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-    setResults(prev => prev.filter(x => String(x.id) !== id))
-    setAlbumTracks(prev => prev.filter(x => String(x.id) !== id))
-    setRecommendSongs(prev => prev.filter(x => String(x.id) !== id))
-  }, [])
 
   useEffect(() => {
     const unsubPlay = player.on('play', () => setIsPlaying(true))
@@ -213,11 +188,6 @@ export default function App() {
         setResults(newResults)
       }
       
-      // 過濾已鎖定的歌曲（Audiomack 受保護/地區鎖定曲目無法下載，隱藏起來）
-      if (lockedIds.size > 0) {
-        setResults(prev => prev.filter(item => !lockedIds.has(String(item.id))))
-      }
-      
       // 判斷是否還有更多結果（每頁結果少於預期 → 沒有更多了）
       if (newResults.length < 20) {
         setHasMore(false)
@@ -276,10 +246,9 @@ export default function App() {
         if (attempt >= attempts.length) {
           console.error('Download failed:', e)
           const msg = e instanceof Error ? e.message : String(e)
-          // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 從列表移除隱藏
+          // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 彈窗提示會員限定
           if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
-            markLocked(String(item.id))
-            showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+            setLockedItem({ title: item.title || '', artist: item.artist || '' })
             return
           }
           showNotification(`下載失敗: ${msg}`, 'error')
@@ -355,11 +324,10 @@ export default function App() {
     } catch (e: any) {
       console.error('Get media source error:', e)
       const errMsg = e?.message || e || ''
-      // Audiomack 受保護內容：播放也無法取得音源 → 隱藏
+      // Audiomack 受保護內容：播放無法取得音源 → 彈窗提示會員限定（不隱藏，專輯內自動跳下一首）
       if (/Not authorized|1005/i.test(String(errMsg)) || /Failed to get media/i.test(String(errMsg))) {
         if (!(item as any)._albumDetail) {
-          markLocked(String(item.id))
-          showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+          setLockedItem({ title: item.title || '', artist: item.artist || '' })
           return
         }
       }
@@ -390,8 +358,7 @@ export default function App() {
       }
       const data = await response.json()
       const songs: MusicItem[] = Array.isArray(data) ? data : (data?.data || [])
-      // 過濾已鎖定（受保護）歌曲
-      setRecommendSongs(songs.filter(s => !lockedIds.has(String(s.id))))
+      setRecommendSongs(songs)
     } catch (e) {
       console.error('Load recommend failed:', e)
       setRecommendSongs([])
@@ -399,7 +366,7 @@ export default function App() {
     } finally {
       setRecommendLoading(false)
     }
-  }, [lockedIds])
+  }, [])
 
   // 切換推薦分頁
   const switchRecommendMode = (mode: 'new' | 'hot') => {
@@ -441,12 +408,7 @@ export default function App() {
       if (response.ok) {
         const data = await response.json()
         if (Array.isArray(data)) {
-          // 過濾已鎖定的歌曲
-          if (lockedIds.size > 0) {
-            setAlbumTracks(data.filter((t: MusicItem) => !lockedIds.has(String(t.id))))
-          } else {
-            setAlbumTracks(data)
-          }
+          setAlbumTracks(data)
         } else {
           setErrorMessage(`載入專輯失敗: ${data.error || '未知錯誤'}`)
         }
@@ -567,6 +529,29 @@ export default function App() {
         </div>
       )}
 
+      {/* 會員限定彈窗 */}
+      {lockedItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setLockedItem(null)}>
+          <div className="bg-gray-800 rounded-xl p-6 max-w-sm w-full mx-4 border border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-4">
+              <div className="text-3xl mb-2">🔒</div>
+              <h3 className="text-lg font-bold mb-1">此歌曲為會員限定</h3>
+              <p className="text-gray-400 text-sm truncate">{lockedItem.title}</p>
+              <p className="text-gray-500 text-xs truncate">{lockedItem.artist}</p>
+            </div>
+            <p className="text-sm text-gray-300 leading-relaxed mb-6">
+              這首是 Audiomack 的會員專屬內容，需要升級為會員才能下載。
+            </p>
+            <button
+              onClick={() => setLockedItem(null)}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="h-16 px-4 md:px-6 flex items-center justify-between border-b border-gray-800">
         <h1 className="text-xl font-bold">MusicFree Web</h1>
@@ -601,7 +586,6 @@ export default function App() {
                       <div className="text-center text-gray-500 py-8">無歌曲數據</div>
                     )}
                     {albumTracks
-                      .filter(track => !lockedIds.has(String(track.id)))
                       .map((track, idx) => (
                       <div
                         key={track.id}
@@ -674,7 +658,6 @@ export default function App() {
                       </div>
                     )}
                     {results
-                      .filter(item => !lockedIds.has(String(item.id)))
                       .map((item) => (
                       <div
                         key={item.id}
@@ -762,7 +745,6 @@ export default function App() {
               )}
               <div className="space-y-2">
                 {recommendSongs
-                  .filter(item => !lockedIds.has(String(item.id)))
                   .map((item) => (
                     <div
                       key={item.id}

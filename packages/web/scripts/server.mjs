@@ -119,6 +119,8 @@ async function searchAudiomack(keyword, type, page, sort = 'popular') {
       platform: 'Audiomack',
       duration: item.duration || 0,
       url_slug: item.url_slug || '',
+      released: item.released ? Number(item.released) : 0,
+      uploaded: item.uploaded ? Number(item.uploaded) : 0,
       type: type === 'album' ? 'album' : type === 'sheet' ? 'sheet' : (type === 'artist' ? 'artist' : 'music'),
       musicList,
     }
@@ -128,18 +130,88 @@ async function searchAudiomack(keyword, type, page, sort = 'popular') {
 // 香港流行曲推薦：用多個歌手/樂隊關鍵字搜尋，熱門/最新兩種排序，去重合併
 const HK_SONG_KEYWORDS = [
   '陳奕迅', '容祖兒', '張學友', '張國榮', '梅艷芳', '鄭秀文', '許冠傑',
-  '陳慧琳', '謝霆鋒', '楊千嬅', '李克勤', '古巨基', 'Beyond', '草蜢',
+  '陳慧琳', '謝霆鋒', '楊千嬅', '李克勤', '古巨基', '草蜢', 'Beyond',
   '王菲', '劉德華', '郭富城', '黎明', 'Twins', '張敬軒',
+  '林家謙', '姜濤', 'MIRROR', '陳卓賢', '柳應廷', 'Anson Lo', '呂爵安',
+  '張天賦', 'Dear Jane', 'RubberBand',
+  '泳兒', '鄭欣宜', '許廷鏗', '衛蘭', '江海迦', '陳柏宇', '林奕匡',
+  'Serrini', '黃妍', '陳蕾', 'AGA',
 ]
+
+// 「最新」模式使用的新世代/活躍香港歌手（以近年仍活躍的為主）
+const HK_NEW_SONG_KEYWORDS = [
+  '林家謙', '姜濤', 'MIRROR', '陳卓賢', '柳應廷', 'Anson Lo', '呂爵安', '陳蕾',
+  '張天賦', 'Dear Jane', 'RubberBand', '許廷鏗', '衛蘭', '江海迦', '黃妍',
+  'Serrini', '泳兒', '鄭欣宜', '林奕匡', '陳柏宇', 'AGA', '張敬軒', '容祖兒',
+  '楊千嬅', '陳奕迅',
+]
+
+// 「最新」模式只保留近期發行的歌（秒）。Audiomack 的 released 是重新上架日，
+// 用較短窗口 + 新歌手集合減少舊歌重發混入。新歌手素材稀疏，1 年內較穩
+const RECENT_WINDOW = 240 * 24 * 60 * 60  // 約 8 個月
 
 async function recommendAudiomack(mode = 'hot', limit = 40) {
   const sort = mode === 'new' ? 'recent' : 'popular'
+  const keywords = mode === 'new' ? HK_NEW_SONG_KEYWORDS : HK_SONG_KEYWORDS
   // 併發搜尋所有香港歌手/樂隊關鍵字
   const results = await Promise.allSettled(
-    HK_SONG_KEYWORDS.map(kw => searchAudiomack(kw, 'music', 1, sort)),
+    keywords.map(kw => searchAudiomack(kw, 'music', 1, sort)),
   )
   const buckets = results.map(r => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []))
-  // 輪流交替取每個關鍵字的歌（每源各取 1 首），避免單一歌手灌滿
+
+  if (mode === 'new') {
+    // 最新：全部按 released（發行時間）降冪排序，只保留近期的歌
+    const now = Math.floor(Date.now() / 1000)
+    const seen = new Set()
+    const songs = []
+    for (let si = 0; si < buckets.length; si++) {
+      const bucket = buckets[si]
+      for (const item of bucket) {
+        const title = (item.title || '').trim()
+        const artist = (item.artist || '').trim()
+        if (!title) continue
+        // 藝人與搜尋關鍵字相符才保留，排除誤搜（黎明=日出、Dear Jane=賽狗、MIRROR=鏡子等）。
+        // 合作曲藝人欄可能含多個歌手，只要包含任一搜尋關鍵字即可
+        const artistOk = !artist || keywords.some(kw => kw && artist.includes(kw))
+        if (!artistOk) continue
+        const key = `${title}::${artist}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        songs.push(item)
+      }
+    }
+    // 同一藝人同一天大量重發 = 舊專輯整批 re-release，非新歌。
+    // 用「藝人+重發日」計數，超過閾值的批次只取第一首代表
+    const batchCount = {}
+    for (const s of songs) {
+      const k = `${s.artist}::${s.released || 0}`
+      batchCount[k] = (batchCount[k] || 0) + 1
+    }
+    const batchSeen = new Set()
+    const deduped = songs.filter(s => {
+      const k = `${s.artist}::${s.released || 0}`
+      if (batchCount[k] > 2) {
+        if (batchSeen.has(k)) return false
+        batchSeen.add(k)
+      }
+      return true
+    })
+    const recent = deduped
+      .filter(s => s.released > now - RECENT_WINDOW)
+      .sort((a, b) => (b.released || 0) - (a.released || 0))
+    return recent.slice(0, limit).map(s => ({
+      id: String(s.id),
+      title: (s.title || '').trim(),
+      artist: (s.artist || '').trim(),
+      artwork: s.artwork || '',
+      platform: 'Audiomack',
+      duration: s.duration || 0,
+      type: 'music',
+      released: s.released || 0,
+    }))
+  }
+
+  // 熱門：輪流交替取每個關鍵字的歌（每源各取 1 首），避免單一歌手灌滿
   const seen = new Set()
   const merged = []
   const maxLen = Math.max(...buckets.map(b => b.length), 0)
