@@ -239,35 +239,54 @@ export default function App() {
 
   const handleDownload = async (item: MusicItem) => {
     const platform = item.platform || ''
-    try {
-      const url = `/api/download?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}&title=${encodeURIComponent(item.title || 'song')}&artist=${encodeURIComponent(item.artist || '')}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        const err = await response.json().catch(() => null)
-        throw new Error(err?.error || `HTTP ${response.status}`)
-      }
-      const contentType = response.headers.get('content-type') || ''
-      const blob = await response.blob()
-      const blobUrl = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = blobUrl
-      const ext = contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'
-      const safeName = (item.title || 'song').replace(/[\\/:*?"<>|]/g, '_').trim() || 'song'
-      link.download = `${safeName}.${ext}`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(blobUrl)
-    } catch (e) {
-      console.error('Download failed:', e)
-      const msg = e instanceof Error ? e.message : String(e)
-      // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 從列表移除隱藏
-      if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
-        markLocked(String(item.id))
-        showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+    const url = `/api/download?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}&title=${encodeURIComponent(item.title || 'song')}&artist=${encodeURIComponent(item.artist || '')}`
+    // 失敗重試（502 通常是伺服器重啟空窗或暫時性上游錯誤，重試一次即可）
+    const attempts = [1, 2]
+    for (const attempt of attempts) {
+      try {
+        const response = await fetch(url)
+        if (!response.ok) {
+          const err = await response.json().catch(() => null)
+          const msg = err?.error || `HTTP ${response.status}`
+          // 鎖定歌曲直接拋出（不重試）
+          if (/Not authorized|1005/i.test(msg) || /Failed to get media/i.test(msg)) {
+            throw new Error(msg)
+          }
+          if (attempt < attempts.length) {
+            await new Promise(r => setTimeout(r, 800))
+            continue
+          }
+          throw new Error(msg)
+        }
+        const contentType = response.headers.get('content-type') || ''
+        const blob = await response.blob()
+        const blobUrl = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = blobUrl
+        const ext = contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'
+        const safeName = (item.title || 'song').replace(/[\\/:*?"<>|]/g, '_').trim() || 'song'
+        link.download = `${safeName}.${ext}`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(blobUrl)
         return
+      } catch (e) {
+        // 最後一次才當作失敗
+        if (attempt >= attempts.length) {
+          console.error('Download failed:', e)
+          const msg = e instanceof Error ? e.message : String(e)
+          // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 從列表移除隱藏
+          if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
+            markLocked(String(item.id))
+            showNotification(`「${item.title || '此歌曲'}」為受保護內容，已從結果隱藏`, 'error')
+            return
+          }
+          showNotification(`下載失敗: ${msg}`, 'error')
+          return
+        }
+        await new Promise(r => setTimeout(r, 800))
       }
-      showNotification(`下載失敗: ${msg}`, 'error')
     }
   }
 
