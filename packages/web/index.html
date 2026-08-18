@@ -15,7 +15,19 @@
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#000000" />
+    <!--
+      Web App Manifest：讓這個站可以「加到主畫面」變成獨立應用。
+      做這件事的原因不是為了好看 —— 國產 Android ROM（vivo FuntouchOS、
+      OnePlus ColorOS…）對「瀏覽器裡的網頁」和「已安裝的應用」是兩套待遇：
+      實測一台一加通知欄有媒體通知但鎖屏沒有、一台 vivo 兩邊都沒有，而同樣的
+      程式在 iOS 上鎖屏正常，可見 MediaSession 本身沒問題，卡在 ROM 的通知與
+      後台策略。裝成獨立應用後它有自己的通知身分，鎖屏媒體控制的成功率高得多。
+      網頁端沒有任何 API 能覆寫系統的鎖屏通知設定，這是唯一還剩的槓桿。
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="WhyMusic" />
+    <link rel="apple-touch-icon" href="/favicon-192.png" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>WhyMusic</title>
     <!-- crypto-js 必須預載入，MusicFree 插件依賴其同步 API -->
