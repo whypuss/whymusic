@@ -146,7 +146,7 @@ export default function ClassicUI({ app, onSwitchUi }: { app: MusicApp; onSwitch
                         onClick={() => {
                           // 帶上專輯脈絡：某首無源時可跳下一首，播完也依序接續
                           const trackWithCtx = { ...track, _albumDetail: albumDetail, _trackIndex: idx }
-                          play(trackWithCtx, { list: albumTracks, index: idx, isAlbum: true })
+                          play(trackWithCtx, { list: albumTracks, index: idx, order: 'sequential' })
                         }}
                       >
                         <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">

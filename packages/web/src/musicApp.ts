@@ -28,9 +28,44 @@ export type PlayMode = 'auto' | 'one' | 'off'
 const PLAY_MODE_ORDER: PlayMode[] = ['auto', 'one', 'off']
 export const PLAY_MODE_ICON: Record<PlayMode, string> = { auto: '🔁', one: '🔂', off: '➡️' }
 export const PLAY_MODE_LABEL: Record<PlayMode, string> = {
-  auto: '自動續播（專輯依序／其他隨機）',
+  auto: '自動續播（清單依序，推薦頁隨機）',
   one: '單曲循環',
   off: '播完即停',
+}
+
+/**
+ * 播放佇列：這首歌來自哪個清單、在第幾位、播完要依序還是隨機。
+ *
+ * order 由呼叫端決定而非猜測：專輯與搜尋結果依序（使用者看到的順序就是
+ * 播放順序），推薦頁隨機（那是一份榜單，依序播會永遠停在前幾首）。
+ */
+export type PlayOrder = 'sequential' | 'shuffle'
+export type PlayQueue = { list: MusicItem[]; index: number; order: PlayOrder }
+
+/** 自動續播時連續失敗的上限。超過就停手，不要無止境地打上游 */
+const MAX_AUTO_SKIP = 8
+
+/**
+ * 依播放順序挑下一首的索引，跳過 skip 裡的（已知播不出來的）。
+ * 沒有可播的下一首時回 -1。
+ * 依序模式播到清單尾端就停，不繞回開頭 —— 繞回去會變成無限循環，
+ * 而使用者要的循環是用播放模式按鈕控制的。
+ */
+function pickNextIndex(queue: PlayQueue, skip: Set<number>): number {
+  const total = queue.list.length
+  if (total === 0) return -1
+  if (queue.order === 'sequential') {
+    for (let i = queue.index + 1; i < total; i++) {
+      if (!skip.has(i)) return i
+    }
+    return -1
+  }
+  const pool: number[] = []
+  for (let i = 0; i < total; i++) {
+    if (i !== queue.index && !skip.has(i)) pool.push(i)
+  }
+  if (pool.length === 0) return -1
+  return pool[Math.floor(Math.random() * pool.length)]
 }
 
 let pluginsInitialized = false
@@ -188,9 +223,7 @@ export function useMusicApp() {
    * 不靠 item._albumDetail.musicList —— 專輯曲目是經 getAlbumInfo 另外載入的，
    * albumDetail 上的 musicList 可能是空的。
    */
-  const queueRef = useRef<{ list: MusicItem[]; index: number; isAlbum: boolean }>({
-    list: [], index: -1, isAlbum: false,
-  })
+  const queueRef = useRef<PlayQueue>({ list: [], index: -1, order: 'sequential' })
 
   // 依賴 pluginKey 來觸發重渲染
   /** 內置音源是否已安裝。依 pluginKey 重算（安裝／移除／啟用都會遞增它） */
@@ -231,26 +264,11 @@ export function useMusicApp() {
     // one 由 audio 原生 loop 處理，根本不會發 ended；off 就是播完即停
     if (playMode !== 'auto') return
 
-    const { list, index, isAlbum } = queueRef.current
-    if (list.length === 0) return
-
-    if (isAlbum) {
-      // 專輯內依序播下一首；最後一首播完就停，不繞回開頭
-      const nextIdx = index + 1
-      if (nextIdx >= list.length) return
-      const next = list[nextIdx]
-      play(next, { list, index: nextIdx, isAlbum: true })
-      return
-    }
-
-    // 非專輯：從同一個清單隨機挑，排除剛播完的那首（清單只有一首就停）
-    if (list.length === 1) return
-    let nextIdx = index
-    for (let i = 0; i < 8 && nextIdx === index; i++) {
-      nextIdx = Math.floor(Math.random() * list.length)
-    }
-    if (nextIdx === index) nextIdx = (index + 1) % list.length
-    play(list[nextIdx], { list, index: nextIdx, isAlbum: false })
+    const q = queueRef.current
+    const nextIdx = pickNextIndex(q, new Set())
+    if (nextIdx < 0) return
+    // auto: true —— 下一首若也放不出來，play() 會自己繼續往後跳
+    play(q.list[nextIdx], { ...q, index: nextIdx }, { auto: true })
   }
 
   useEffect(() => {
@@ -418,11 +436,22 @@ export function useMusicApp() {
    * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
    * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
    */
+  /**
+   * 播放。播放器只做一件事：問音源要一個可播的 URL，然後播。
+   * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
+   * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
+   *
+   * opts.auto  這次播放是自動續播觸發的（而非使用者點的）
+   * opts.skip  本輪已知播不出來的索引，跨遞迴共用同一個 Set
+   */
   const play = async (
     item: MusicItem,
-    queue?: { list: MusicItem[]; index: number; isAlbum: boolean },
+    queue?: PlayQueue,
+    opts?: { auto?: boolean; skip?: Set<number> },
   ) => {
     if (queue) queueRef.current = queue
+    const auto = opts?.auto ?? false
+    const skip = opts?.skip ?? new Set<number>()
     setPlayingItem(item)
     try {
       const platform = item.platform || ''
@@ -437,29 +466,37 @@ export function useMusicApp() {
       await player.play(media.url)
       setIsPlaying(true)
     } catch (e: any) {
-      console.error('Get media source error:', e)
       const errMsg = e?.message || e || ''
+      console.error(`[play] ${item.title} 失敗:`, errMsg)
 
-      // 專輯內某首無源（常見於有授權限制的曲目）→ 跳下一首，
-      // 不要讓整張專輯停在一首放不出來的歌上
-      const album = item._albumDetail
-      if (album && item._trackIndex !== undefined) {
-        const allTracks: MusicItem[] = album.musicList || []
-        const nextIdx = (item._trackIndex || 0) + 1
-        if (nextIdx < allTracks.length) {
-          const nextTrack = { ...allTracks[nextIdx], _albumDetail: album, _trackIndex: nextIdx }
-          console.log(`[play] ${item.id} failed (${errMsg}), trying next: ${nextTrack.id}`)
-          return await play(nextTrack)
+      const q = queueRef.current
+      if (q.index >= 0) skip.add(q.index)
+
+      // 自動續播中遇到播不出來的歌 → 跳過它繼續，不要讓整輪停在一首壞歌上。
+      // （這是先前的 bug：非專輯曲目一失敗就彈窗並停止播放）
+      if (auto && skip.size <= MAX_AUTO_SKIP) {
+        const nextIdx = pickNextIndex(q, skip)
+        if (nextIdx >= 0) {
+          const next = q.list[nextIdx]
+          console.log(`[play] 跳過無源曲目，改播：${next.title}`)
+          return await play(next, { ...q, index: nextIdx }, { auto: true, skip })
         }
       }
 
-      // 單曲無源就直接告知。跨源救援是音源自己的責任（WhyMusic 的後端會用
-      // 歌名+歌手到其餘子音源找同一首歌），前端不再重試一輪。
-      if (!album) {
-        setLockedItem({ title: item.title || '', artist: item.artist || '' })
+      if (auto) {
+        // 跳不動了才收手，並說清楚為什麼停下來
+        showNotification(
+          skip.size > MAX_AUTO_SKIP
+            ? `連續 ${skip.size} 首無可用音源，已停止續播`
+            : '清單裡沒有其他可播的曲目了',
+          'error',
+        )
+        setIsPlaying(false)
         return
       }
-      showNotification(`播放失敗: ${String(errMsg)}`, 'error')
+
+      // 使用者自己點的那首放不出來 → 明確告知，不要默默跳走
+      setLockedItem({ title: item.title || '', artist: item.artist || '' })
     }
   }
 
@@ -541,10 +578,17 @@ export function useMusicApp() {
         loadAlbumTracks(item)
       }
     } else {
-      // 歌曲：連同它所在的清單一起傳入，播完才知道要接什麼
-      const list = currentView === 'recommend' ? recommendSongs : results
+      // 歌曲：連同它所在的清單一起傳入，播完才知道要接什麼。
+      // 搜尋結果依序播（使用者看到的順序就是播放順序）；推薦頁隨機
+      // （那是一份千首的榜單，依序播會永遠繞在前幾首）。
+      const fromRecommend = currentView === 'recommend'
+      const list = fromRecommend ? recommendSongs : results
       const index = list.findIndex(s => s.id === item.id && s.platform === item.platform)
-      play(item, { list, index: index >= 0 ? index : 0, isAlbum: false })
+      play(item, {
+        list,
+        index: index >= 0 ? index : 0,
+        order: fromRecommend ? 'shuffle' : 'sequential',
+      })
     }
   }
 

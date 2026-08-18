@@ -309,7 +309,7 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
                     active={playingItem?.id === track.id}
                     onClick={() => play(
                       { ...track, _albumDetail: albumDetail, _trackIndex: idx },
-                      { list: albumTracks, index: idx, isAlbum: true },
+                      { list: albumTracks, index: idx, order: 'sequential' },
                     )}
                     onDownload={() => handleDownload(track)}
                   />
