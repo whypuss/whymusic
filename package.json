@@ -9,12 +9,14 @@
     "dev": "pnpm --filter @musicfree/web dev",
     "build": "pnpm --filter @musicfree/web build",
     "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck",
-    "build:cf": "pnpm build && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/"
+    "build:cf": "pnpm build && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/",
+    "build:zip": "pnpm build && node scripts/build-cf-zip.mjs"
   },
   "dependencies": {
     "crypto-js": "^4.2.0"
   },
   "devDependencies": {
-    "@types/crypto-js": "^4.2.2"
+    "@types/crypto-js": "^4.2.2",
+    "esbuild": "0.21.5"
   }
 }
