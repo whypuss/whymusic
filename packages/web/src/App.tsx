@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
-import audiomackCode from './plugins/bundled/audiomack.js?raw'
+import whymusicCode from './plugins/bundled/whymusic.js?raw'
 
 const player = new Player()
 const pluginManager = new PluginManager()
 
 /** 官方插件（內置代碼，無需 CDN 安裝） */
 const OFFICIAL_PLUGINS = [
-  { name: 'Audiomack', code: audiomackCode },
+  // 單一聚合音源：netease / joox / audiomack 三個子音源由後端扇出並合併，
+  // 前端不再各自註冊，避免同一首歌在列表裡重複出現
+  { name: 'WhyMusic', code: whymusicCode },
 ]
 
 // 加載插件（優先使用內置代碼）
@@ -63,7 +65,7 @@ export default function App() {
   const [playingItem, setPlayingItem] = useState<MusicItem | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [pluginUrl, setPluginUrl] = useState('')
   const [pluginName, setPluginName] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -155,22 +157,6 @@ export default function App() {
       console.log('[App] Searching page:', pageNum, 'plugins:', enabledPlugins.map(p => p.name))
       
       for (const plugin of enabledPlugins) {
-        // Audiomack：使用後端 API（OAuth 簽名由後端處理）
-        if (plugin.name === 'Audiomack') {
-          try {
-            const response = await fetch(`/api/search?q=${encodeURIComponent(keyword)}&type=${searchType}&page=${pageNum}`)
-            if (response.ok) {
-              const apiResults = await response.json()
-              newResults = newResults.concat(apiResults)
-              console.log('[App] Backend API page', pageNum, 'results:', apiResults.length)
-            }
-          } catch (e) {
-            console.error('[App] Backend API failed:', e)
-          }
-          continue
-        }
-        
-        // 其他 plugin
         try {
           const pluginResults = await pluginManager.searchForPlugin(plugin.name, keyword, searchType, pageNum)
           if (pluginResults && pluginResults.length > 0) {
@@ -207,9 +193,17 @@ export default function App() {
     }
   }, [keyword, searchType, pluginManager])
 
-  const handleDownload = async (item: MusicItem) => {
+  const handleDownload = async (item: MusicItem, isFallback = false) => {
     const platform = item.platform || ''
-    const url = `/api/download?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}&title=${encodeURIComponent(item.title || 'song')}&artist=${encodeURIComponent(item.artist || '')}`
+    const downloadParams = new URLSearchParams({
+      id: String(item.id),
+      platform,
+      title: item.title || 'song',
+      artist: item.artist || '',
+    })
+    // GD 聚合音源需帶子音源，後端才能直取而不必跨源重找
+    if (item.subSource) downloadParams.set('source', item.subSource)
+    const url = `/api/download?${downloadParams.toString()}`
     // 失敗重試（502 通常是伺服器重啟空窗或暫時性上游錯誤，重試一次即可）
     const attempts = [1, 2]
     for (const attempt of attempts) {
@@ -220,6 +214,15 @@ export default function App() {
           const msg = err?.error || `HTTP ${response.status}`
           // 鎖定歌曲直接拋出（不重試）
           if (/Not authorized|1005/i.test(msg) || /Failed to get media/i.test(msg)) {
+            // 該子音源無下載權限 → 用歌名+歌手在其餘子音源找同一首歌
+            if (!isFallback && !item._dlFallbackAttempted) {
+              const altItem = await findGdFallback(item)
+              if (altItem) {
+                altItem._dlFallbackAttempted = true
+                showNotification('原音源無效，改用其他子音源下載', 'info')
+                return await handleDownload(altItem, true)
+              }
+            }
             throw new Error(msg)
           }
           if (attempt < attempts.length) {
@@ -246,7 +249,7 @@ export default function App() {
         if (attempt >= attempts.length) {
           console.error('Download failed:', e)
           const msg = e instanceof Error ? e.message : String(e)
-          // Audiomack 受保護/地區鎖定曲目（1005 Not authorized）→ 彈窗提示會員限定
+          // 下載仍失敗（含 YouTube fallback 失敗）→ 彈窗提示
           if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
             setLockedItem({ title: item.title || '', artist: item.artist || '' })
             return
@@ -259,10 +262,46 @@ export default function App() {
     }
   }
 
-  const showNotification = (message: string, type: 'success' | 'error') => {
+  const showNotification = (message: string, type: 'success' | 'error' | 'info') => {
     setNotification({ message, type })
     setTimeout(() => setNotification(null), 3000)
   }
+
+  // 用歌名+歌手到 GD 聚合音源找替代音源（Audiomack 無播放權限曲目的救援路徑）
+  //
+  // 原本這裡打 /api/yt-search 用 YouTube 頂替，但 YouTube 的 player API 現在對
+  // 所有 client 都要求 PoToken（回 LOGIN_REQUIRED / "Sign in to confirm you're
+  // not a bot"），搜到了也放不出聲音，故改用 GD。
+  const findGdFallback = useCallback(async (item: MusicItem): Promise<MusicItem | null> => {
+    const query = [item.title, item.artist].filter(Boolean).join(' ')
+    if (!query.trim()) return null
+    try {
+      const response = await fetch(`/api/why-search?q=${encodeURIComponent(query)}&count=10`)
+      if (!response.ok) return null
+      const results = await response.json()
+      const list: MusicItem[] = Array.isArray(results) ? results : (results?.data || [])
+      // 挑最接近的：歌名完全相同優先，其次前綴/包含，避免配到 Live／伴奏版
+      const norm = (s?: string) => (s || '').toLowerCase().replace(/[（([【].*?[)）\]】]/g, '').replace(/\s+/g, '')
+      const target = norm(item.title)
+      const targetArtist = norm(item.artist)
+      const rank = (s: MusicItem) => {
+        const t = norm(s.title)
+        let score = 0
+        if (target && t === target) score += 20
+        else if (target && (t.startsWith(target) || target.startsWith(t))) score += 10
+        else if (target && t.includes(target)) score += 5
+        const a = norm(s.artist)
+        if (targetArtist && a && (a.includes(targetArtist) || targetArtist.includes(a))) score += 8
+        return score
+      }
+      const pick = list
+        .filter(s => rank(s) > 0)
+        .sort((a, b) => rank(b) - rank(a))[0]
+      return pick || null
+    } catch {
+      return null
+    }
+  }, [])
 
   const play = async (item: MusicItem) => {
     setPlayingItem(item)
@@ -270,31 +309,22 @@ export default function App() {
       let audioUrl: string | null = null
       const platform = item.platform || ''
 
-      if (platform === 'Audiomack') {
-        // Audiomack: 後端 OAuth 簽名，直接使用 signed URL（不走代理，避免簽名被編碼破壞）
-        const mediaUrl = `/api/media?id=${encodeURIComponent(String(item.id))}&platform=Audiomack`
-        const response = await fetch(mediaUrl)
-        if (!response.ok) {
-          const err = await response.json()
-          const errMsg = err.error || 'Failed to get Audiomack media'
-          // 如果專輯內有歌曲列表，嘗試下一首
-          const album = (item as any)._albumDetail
-          if (album && (item as any)._trackIndex !== undefined) {
-            const allTracks = album.musicList || []
-            const nextIdx = ((item as any)._trackIndex || 0) + 1
-            if (nextIdx < allTracks.length) {
-              const nextTrack = allTracks[nextIdx]
-              console.log(`[play] Song ${item.id} failed (${errMsg}), trying next: ${nextTrack.id}`)
-              nextTrack._albumDetail = album
-              nextTrack._trackIndex = nextIdx
-              return await play(nextTrack)
-            }
-          }
-          throw new Error(errMsg)
-        }
-        const data = await response.json()
-        audioUrl = data.url || null
-        console.log('[play] Audiomack signed URL')
+      if (platform === 'WhyMusic') {
+        // 聚合音源：後端依 subSource 解析（netease/joox 走 GD 上游、audiomack
+        // 走 OAuth）並串流。帶上歌名/歌手，後端在該子音源拿不到音源時可跨子源
+        // 找同一首歌，省一次前端往返。
+        const params = new URLSearchParams({
+          id: String(item.id),
+          platform: 'WhyMusic',
+          source: item.subSource || '',
+          title: item.title || '',
+          artist: item.artist || '',
+        })
+        audioUrl = `/api/play?${params.toString()}`
+      } else if (platform === 'Youtube' || platform === 'YouTube') {
+        // YouTube: 後端 player API 拿音頻 URL
+        const mediaUrl = `/api/play?id=${encodeURIComponent(String(item.id))}&platform=Youtube`
+        audioUrl = mediaUrl
       } else {
         // 其他平台：嘗試 getMediaSource，失敗後回 /api/play
         const plugin = pluginManager.getPlugin(platform)
@@ -324,12 +354,34 @@ export default function App() {
     } catch (e: any) {
       console.error('Get media source error:', e)
       const errMsg = e?.message || e || ''
-      // Audiomack 受保護內容：播放無法取得音源 → 彈窗提示會員限定（不隱藏，專輯內自動跳下一首）
-      if (/Not authorized|1005/i.test(String(errMsg)) || /Failed to get media/i.test(String(errMsg))) {
-        if (!(item as any)._albumDetail) {
-          setLockedItem({ title: item.title || '', artist: item.artist || '' })
-          return
+
+      // 專輯內某首無源（常見於 audiomack 子源的授權曲目）→ 跳下一首，
+      // 不要讓整張專輯停在一首放不出來的歌上
+      const album = item._albumDetail
+      if (album && item._trackIndex !== undefined) {
+        const allTracks: MusicItem[] = album.musicList || []
+        const nextIdx = (item._trackIndex || 0) + 1
+        if (nextIdx < allTracks.length) {
+          const nextTrack = { ...allTracks[nextIdx], _albumDetail: album, _trackIndex: nextIdx }
+          console.log(`[play] ${item.id} failed (${errMsg}), trying next: ${nextTrack.id}`)
+          return await play(nextTrack)
         }
+      }
+
+      // 單曲無源 → 用歌名+歌手在其餘子音源找替代（後端已試過一輪，
+      // 這裡多一層是為了處理後端整條解析失敗、連 title 都沒帶到的情況）
+      if (!album && !item._gdFallbackAttempted) {
+        const altItem = await findGdFallback(item)
+        if (altItem) {
+          altItem._gdFallbackAttempted = true
+          console.log(`[play] fallback to alternate sub-source: ${altItem.title}`)
+          showNotification('原音源無效，已改用其他子音源播放', 'info')
+          return await play(altItem)
+        }
+      }
+      if (!album) {
+        setLockedItem({ title: item.title || '', artist: item.artist || '' })
+        return
       }
       showNotification(`播放失敗: ${String(errMsg)}`, 'error')
     }
@@ -338,6 +390,17 @@ export default function App() {
   const togglePlay = () => {
     player.toggle()
     setIsPlaying(player.isPlaying)
+  }
+
+  /** 點進度條跳轉（音源端點支援 Range，可直接 seek） */
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!duration || !Number.isFinite(duration)) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+    const target = ratio * duration
+    player.seekTo(target)
+    setCurrentTime(target)
   }
 
   const loadMore = async () => {
@@ -437,6 +500,7 @@ export default function App() {
   }
 
   const formatTime = (seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
     const m = Math.floor(seconds / 60)
     const s = Math.floor(seconds % 60)
     return `${m}:${s.toString().padStart(2, '0')}`
@@ -521,8 +585,8 @@ export default function App() {
         <div
           className="fixed top-4 right-4 z-50 px-4 py-2 rounded-lg"
           style={{
-            background: notification.type === 'success' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-            color: notification.type === 'success' ? '#22c55e' : '#ef4444'
+            background: notification.type === 'success' ? 'rgba(34, 197, 94, 0.2)' : notification.type === 'info' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+            color: notification.type === 'success' ? '#22c55e' : notification.type === 'info' ? '#3b82f6' : '#ef4444'
           }}
         >
           {notification.message}
@@ -894,12 +958,18 @@ export default function App() {
               <div className="text-sm text-gray-400 truncate">{playingItem?.artist || '選擇歌曲播放'}</div>
             </div>
           </div>
-          {/* Progress Bar */}
-          <div className="relative h-1 bg-gray-600 rounded-full max-w-2xl mx-auto mb-2">
-            <div
-              className="absolute top-0 left-0 h-full bg-blue-500 rounded-full transition-all"
-              style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%' }}
-            />
+          {/* Progress Bar（可點擊跳轉；外層加 py 擴大點擊範圍） */}
+          <div
+            className="max-w-2xl mx-auto mb-2 py-2 cursor-pointer"
+            onClick={handleSeek}
+            title="點擊跳轉"
+          >
+            <div className="relative h-1 bg-gray-600 rounded-full">
+              <div
+                className="absolute top-0 left-0 h-full bg-blue-500 rounded-full transition-all"
+                style={{ width: duration > 0 ? `${(currentTime / duration) * 100}%` : '0%' }}
+              />
+            </div>
           </div>
           <div className="flex items-center justify-center gap-4 max-w-2xl mx-auto">
             <span className="text-sm text-gray-400 w-10 text-right">{formatTime(currentTime)}</span>

@@ -10,7 +10,7 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createHmac } from 'node:crypto'
 
-const PORT = 8788
+const PORT = Number(process.env.PORT) || 8788
 const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
 
 // ── OAuth 1.0 Configuration ────────────────────────────────────────
@@ -240,6 +240,58 @@ async function recommendAudiomack(mode = 'hot', limit = 40) {
   return merged
 }
 
+// ── YouTube 搜尋（後端執行，無 CORS）──────────────────────────────
+async function searchYouTube(keyword, page = 1) {
+  const data = JSON.stringify({
+    context: {
+      client: {
+        hl: 'zh-CN', gl: 'US', deviceMake: '', deviceModel: '',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        clientName: 'WEB', clientVersion: '2.20231121.08.00', osName: 'Windows', osVersion: '10.0',
+        platform: 'DESKTOP', browserName: 'Edge Chromium', browserVersion: '119.0.0.0',
+        screenWidthPoints: 1358, screenHeightPoints: 1012, screenPixelDensity: 1,
+      },
+    },
+    user: { lockedSafetyMode: false },
+    request: { useSsl: true, internalExperimentFlags: [] },
+    query: keyword,
+  })
+  const response = await fetch('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: data,
+  })
+  if (!response.ok) throw new Error(`YouTube API error: ${response.status}`)
+  const j = await response.json()
+  const secs = j?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents
+  if (!secs) return []
+  const out = []
+  for (const it of secs) {
+    if (!it.itemSectionRenderer) continue
+    for (const c of it.itemSectionRenderer.contents) {
+      if (!c.videoRenderer) continue
+      const v = c.videoRenderer
+      const title = v.title?.runs?.[0]?.text || ''
+      const artist = v.ownerText?.runs?.[0]?.text || ''
+      if (title.toLowerCase().includes('premiere')) continue
+      const len = v.lengthText?.simpleText || v.lengthText?.runs?.map(r => r.text).join('') || ''
+      // 過濾太長影片（演唱會/LIVE 片段），香港流行曲通常 < 8 分鐘
+      const m = len.match(/(\d+):(\d+)/)
+      if (m && (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) > 480) continue
+      out.push({
+        id: v.videoId,
+        title,
+        artist,
+        artwork: v.thumbnail?.thumbnails?.[v.thumbnail.thumbnails.length - 1]?.url || '',
+        platform: 'Youtube',
+        duration: m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0,
+        type: 'music',
+      })
+    }
+  }
+  return out
+}
+
 /**
  * 專輯/歌單詳情 - 使用 Audiomack 數據 API
  * 返回專輯/歌單內的歌曲列表
@@ -334,6 +386,375 @@ async function getAudiomackMedia(songId) {
   return data.signedUrl || ''
 }
 
+// YouTube 音頻 URL（ANDROID_MUSIC client）
+async function getYouTubeMedia(videoId) {
+  const body = JSON.stringify({
+    context: {
+      client: {
+        clientName: 'ANDROID_MUSIC',
+        clientVersion: '6.14.50',
+        hl: 'en',
+        gl: 'GB',
+        deviceMake: '',
+        deviceModel: '',
+        userAgent: 'com.google.android.apps.youtube.music/6.14.50 (Linux; U; Android 13; GB) gzip',
+        osName: 'Android',
+        osVersion: '13',
+        platform: 'MOBILE',
+        screenWidthPoints: 689,
+        screenHeightPoints: 963,
+        screenPixelDensity: 1,
+        timeZone: 'Europe/Amsterdam',
+      },
+      user: { enableSafetyMode: false },
+      request: { internalExperimentFlags: [], consistencyTokenJars: [] },
+    },
+    contentCheckOk: true,
+    racyCheckOk: true,
+    video_id: videoId,
+  })
+  const ytResp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+  if (!ytResp.ok) throw new Error(`YouTube API error: ${ytResp.status}`)
+  const ytData = await ytResp.json()
+  if (ytData.playabilityStatus?.status !== 'OK') {
+    throw new Error(`YouTube playability: ${ytData.playabilityStatus?.reason || 'unavailable'}`)
+  }
+  const formats = ytData.streamingData?.formats || []
+  const adaptiveFormats = ytData.streamingData?.adaptiveFormats || []
+  const allFormats = [...adaptiveFormats, ...formats].filter(f => f.url)
+  const audioFormats = allFormats.filter(f => (f.mimeType || '').includes('audio'))
+  const candidates = audioFormats.length > 0 ? audioFormats : allFormats
+  return candidates[0]?.url || null
+}
+
+// ── WhyMusic（本站聚合音源）────────────────────────────────────────
+// 對外只呈現一個來源 WhyMusic，底下扇出到多個子音源：
+//   netease / joox  → 經上游 GD Music API（music-api.gdstudio.xyz）代理
+//   audiomack       → 走本站自己的 OAuth 實作（searchAudiomack / getAudiomackMedia）
+// 三者各自補足對方的缺口：netease 簡體曲庫最全、joox 港台繁體與粵語 live 版本多、
+// audiomack 則是歐美獨立音樂 / hip-hop / afrobeats。
+//
+// 未納入 kuwo 與 bilibili：2026-08-18 實測 kuwo 的 url 端點恆回空字串、
+// bilibili 回 HTML，兩者搜尋雖可用但點下去播不出來，列進來只會變成啞彈。
+// YouTube 亦未納入：全 client 需 PoToken/BotGuard，非本站能修。
+const GD_API = process.env.GD_API_URL || 'https://music-api.gdstudio.xyz/api.php'
+
+/** audiomack 不由 GD 代理，需與其餘子源分流處理 */
+const AUDIOMACK_SOURCE = 'audiomack'
+
+const WHY_SOURCES = (process.env.WHY_MUSIC_SOURCES || 'netease,joox,audiomack')
+  .split(',').map(s => s.trim()).filter(Boolean)
+/** 由上游 GD API 代理的子源 */
+const GD_SOURCES = WHY_SOURCES.filter(s => s !== AUDIOMACK_SOURCE)
+const GD_BITRATE = parseInt(process.env.WHY_MUSIC_BITRATE || '320', 10)
+
+// 推薦頁資料來源：網易雲榜單。playlist 回應自帶封面與時長，
+// 不必逐首打 types=pic，省上游請求。前者不足 limit 時用後者補齊。
+const GD_TOPLISTS = {
+  new: ['10169002', '3779629'],  // 香港電台中文歌曲龍虎榜 → 雲音樂新歌榜
+  hot: ['3778678', '19723756'],  // 雲音樂熱歌榜 → 雲音樂飆升榜
+}
+
+// 上游按 IP 限流，而本服務所有使用者共用同一出口 IP，故一律走 TTL 快取。
+const GD_TTL = { search: 600e3, url: 1200e3, pic: 864e5, lyric: 864e5, playlist: 1800e3 }
+const GD_CACHE_MAX = 500
+const gdCache = new Map()
+
+function gdCacheGet(key) {
+  const hit = gdCache.get(key)
+  if (!hit) return undefined
+  if (Date.now() > hit.expires) {
+    gdCache.delete(key)
+    return undefined
+  }
+  return hit.value
+}
+
+function gdCacheSet(key, value, ttl) {
+  // 到上限就從最舊的開始清（Map 保留插入順序），清到八成滿為止
+  if (gdCache.size >= GD_CACHE_MAX) {
+    for (const k of gdCache.keys()) {
+      gdCache.delete(k)
+      if (gdCache.size <= GD_CACHE_MAX * 0.8) break
+    }
+  }
+  gdCache.set(key, { value, expires: Date.now() + ttl })
+}
+
+async function gdRequest(types, params) {
+  const query = new URLSearchParams({ types, ...params }).toString()
+  const cached = gdCacheGet(query)
+  if (cached !== undefined) return cached
+
+  const response = await fetch(`${GD_API}?${query}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      'Accept': 'application/json',
+    },
+  })
+  const text = await response.text()
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    // 上游對不支援的參數組合會回 HTML 錯誤頁
+    throw new Error(`GD Music 回應非 JSON (HTTP ${response.status}): ${text.slice(0, 120)}`)
+  }
+  if (!response.ok || data?.detail) {
+    throw new Error(`GD Music API error: ${data?.detail || `HTTP ${response.status}`}`)
+  }
+  gdCacheSet(query, data, GD_TTL[types] || 600e3)
+  return data
+}
+
+// 繁 → 簡 常用字對照：上游（網易雲）資料多為簡體，本站 UI 與 Audiomack
+// 曲目多為繁體，跨源比對同一首歌時需要歸一化（「浮誇」↔「浮夸」）。
+const GD_T2S = {
+  傑: '杰', 倫: '伦', 週: '周', 風: '风', 東: '东', 華: '华', 國: '国', 學: '学',
+  對: '对', 說: '说', 記: '记', 開: '开', 關: '关', 點: '点', 機: '机', 電: '电',
+  車: '车', 門: '门', 問: '问', 間: '间', 見: '见', 話: '话', 實: '实', 書: '书',
+  長: '长', 認: '认', 識: '识', 飛: '飞', 魚: '鱼', 鳥: '鸟', 馬: '马', 龍: '龙',
+  雲: '云', 霧: '雾', 頭: '头', 頁: '页', 項: '项', 順: '顺', 須: '须', 體: '体',
+  誇: '夸', 愛: '爱', 樂: '乐', 夢: '梦', 淚: '泪', 戀: '恋', 願: '愿', 歲: '岁',
+  舊: '旧', 過: '过', 還: '还', 這: '这', 個: '个', 們: '们', 來: '来', 時: '时',
+  後: '后', 從: '从', 當: '当', 應: '应', 該: '该', 離: '离', 別: '别', 遠: '远',
+  邊: '边', 裡: '里', 內: '内', 萬: '万', 億: '亿', 聽: '听', 觀: '观', 讀: '读',
+  寫: '写', 語: '语', 詞: '词', 詩: '诗', 聲: '声', 響: '响', 靜: '静', 續: '续',
+  終: '终', 結: '结', 緣: '缘', 總: '总', 經: '经', 歷: '历', 變: '变', 換: '换',
+  轉: '转', 動: '动', 靈: '灵', 獨: '独', 單: '单', 雙: '双', 誰: '谁', 為: '为',
+  無: '无', 沒: '没', 給: '给', 將: '将', 帶: '带', 讓: '让', 覺: '觉', 錯: '错',
+  難: '难', 歡: '欢', 樣: '样', 麼: '么', 嗎: '吗', 傷: '伤', 錢: '钱', 醫: '医',
+}
+
+/** 歸一化歌名/歌手：去括號註記、去標點空白、繁轉簡、轉小寫 */
+function gdNormalizeName(text) {
+  const stripped = String(text || '')
+    .toLowerCase()
+    // 去掉 (Live)、（電視劇主題曲）、[Explicit] 這類註記
+    .replace(/[（([【].*?[)）\]】]/g, '')
+    .replace(/[\s\-_·・,，.。!！?？'"'"、/\\|&+]/g, '')
+  let out = ''
+  for (const ch of stripped) out += GD_T2S[ch] || ch
+  return out
+}
+
+/** 判斷搜尋結果是否為目標歌曲（歌名相符 + 歌手互相包含，支援繁簡） */
+function gdIsSameSong(candidate, target) {
+  const ct = gdNormalizeName(candidate.title)
+  const tt = gdNormalizeName(target.title)
+  if (!ct || !tt) return false
+  if (ct !== tt && !ct.startsWith(tt) && !tt.startsWith(ct)) return false
+  const ta = gdNormalizeName(target.artist)
+  if (!ta) return true  // 目標無歌手資訊，歌名相符即可
+  const ca = gdNormalizeName(candidate.artist)
+  if (!ca) return false
+  // 歌手可能是「陳奕迅 / MissG」這種拼接，歸一化後互相包含即算命中
+  return ca.includes(ta) || ta.includes(ca)
+}
+
+/** GD 歌曲 → 本站 MusicItem */
+function gdNormalizeSong(raw, fallbackSource) {
+  const artist = Array.isArray(raw.artist)
+    ? raw.artist.filter(Boolean).join(' / ')
+    : String(raw.artist || '')
+  return {
+    id: String(raw.url_id || raw.id || ''),
+    title: String(raw.name || ''),
+    artist,
+    album: String(raw.album || ''),
+    platform: 'WhyMusic',
+    // GD 的子音源（netease / joox…），播放時要原樣帶回上游
+    subSource: String(raw.source || fallbackSource || ''),
+    picId: raw.pic_id ? String(raw.pic_id) : '',
+    lyricId: raw.lyric_id ? String(raw.lyric_id) : '',
+    type: 'music',
+  }
+}
+
+/** Audiomack 搜尋結果 → WhyMusic MusicItem */
+function audiomackToWhyItem(raw) {
+  return {
+    id: String(raw.id || ''),
+    title: String(raw.title || ''),
+    artist: String(raw.artist || ''),
+    album: '',
+    platform: 'WhyMusic',
+    subSource: AUDIOMACK_SOURCE,
+    artwork: raw.artwork || '',
+    duration: raw.duration || 0,
+    // Audiomack 的專輯/歌單端點需要 slug 才能還原，music 類型留著不影響
+    urlSlug: String(raw.url_slug || ''),
+    picId: '',
+    lyricId: '',
+    type: 'music',
+  }
+}
+
+/**
+ * Audiomack 的專輯/歌單/歌手結果 → WhyMusic。
+ * 外層與內層 musicList 都要改掛，否則點進專輯後每首歌的 platform 仍是
+ * Audiomack，會走錯播放分支。
+ */
+function audiomackContainerToWhyItem(raw) {
+  return {
+    ...raw,
+    platform: 'WhyMusic',
+    subSource: AUDIOMACK_SOURCE,
+    musicList: (raw.musicList || []).map(track => ({
+      ...track,
+      platform: 'WhyMusic',
+      subSource: AUDIOMACK_SOURCE,
+    })),
+  }
+}
+
+/** 取單一子源的搜尋結果：audiomack 走自家 OAuth，其餘經 GD 上游 */
+async function searchWhySubSource(source, keyword, page, count) {
+  if (source === AUDIOMACK_SOURCE) {
+    const list = await searchAudiomack(keyword, 'music', page)
+    return list.map(audiomackToWhyItem)
+  }
+  const data = await gdRequest('search', {
+    source, name: keyword, count: String(count), pages: String(page),
+  })
+  return Array.isArray(data) ? data.map(raw => gdNormalizeSong(raw, source)) : []
+}
+
+/** 多源並發搜尋：各源輪流取一首後合併，同名同歌手去重 */
+async function searchWhyMusic(keyword, page = 1, count = 20) {
+  const settled = await Promise.allSettled(
+    WHY_SOURCES.map(source => searchWhySubSource(source, keyword, page, count)),
+  )
+  const buckets = settled.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value
+    console.error(`[why] search failed on ${WHY_SOURCES[i]}: ${r.reason?.message}`)
+    return []
+  })
+
+  const seen = new Set()
+  const merged = []
+  const maxLen = Math.max(0, ...buckets.map(b => b.length))
+  for (let idx = 0; idx < maxLen; idx++) {
+    for (const bucket of buckets) {
+      const item = bucket[idx]
+      if (!item || !item.id || !item.title) continue
+      const key = `${gdNormalizeName(item.title)}::${gdNormalizeName(item.artist)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(item)
+    }
+  }
+  return merged
+}
+
+async function getGdUrl(songId, source, bitrate = GD_BITRATE) {
+  const data = await gdRequest('url', { source, id: songId, br: String(bitrate) })
+  return data?.url || ''
+}
+
+/** 取單一子源的播放 URL：audiomack 走自家 OAuth，其餘經 GD 上游 */
+async function getWhySubSourceUrl(songId, source, bitrate = GD_BITRATE) {
+  if (source === AUDIOMACK_SOURCE) return await getAudiomackMedia(songId)
+  return await getGdUrl(songId, source, bitrate)
+}
+
+/**
+ * 取可播放的音源 URL。
+ * 指定子源拿不到時（GD 上游對部分曲目回空字串、Audiomack 對授權曲目回
+ * 1005 Not authorized），用歌名+歌手到其餘子源找同一首歌再試。
+ * 這是跨子源救援路徑，繁簡歸一化讓「浮誇」也能在簡體源命中。
+ */
+async function resolveWhyMusicUrl({ id, source, bitrate, title, artist }) {
+  const primary = source || WHY_SOURCES[0]
+  if (id) {
+    try {
+      const direct = await getWhySubSourceUrl(id, primary, bitrate)
+      if (direct) return { url: direct, source: primary, id }
+    } catch (err) {
+      console.error(`[why] url failed ${primary}/${id}: ${err.message}`)
+    }
+  }
+
+  const keyword = [title, artist].filter(Boolean).join(' ').trim()
+  if (!keyword) return null
+  for (const candidateSource of WHY_SOURCES) {
+    // 主源已用 id 直取過，不重複試
+    if (candidateSource === primary && id) continue
+    try {
+      const list = await searchWhySubSource(candidateSource, keyword, 1, 5)
+      for (const candidate of list.slice(0, 3)) {
+        if (!candidate.id || !gdIsSameSong(candidate, { title, artist })) continue
+        const url = await getWhySubSourceUrl(candidate.id, candidateSource, bitrate)
+        if (url) return { url, source: candidateSource, id: candidate.id, matched: candidate }
+      }
+    } catch (err) {
+      console.error(`[why] fallback search failed on ${candidateSource}: ${err.message}`)
+    }
+  }
+  return null
+}
+
+// 歌詞與封面只有 GD 代理的子源提供。Audiomack 沒有對應端點（封面在搜尋
+// 結果就隨 artwork 回來了），直接回空值，不要拿 source=audiomack 去打 GD。
+async function getWhyMusicLyric(lyricId, source) {
+  if (source === AUDIOMACK_SOURCE) return { lyric: '', tlyric: '' }
+  const data = await gdRequest('lyric', { source, id: lyricId })
+  return { lyric: data?.lyric || '', tlyric: data?.tlyric || '' }
+}
+
+async function getWhyMusicPic(picId, source, size = 500) {
+  if (source === AUDIOMACK_SOURCE) return ''
+  const data = await gdRequest('pic', { source, id: picId, size: String(size) })
+  return data?.url || ''
+}
+
+/** 推薦頁：網易雲榜單（回應自帶封面，無需逐首取圖） */
+async function recommendWhyMusic(mode = 'hot', limit = 40) {
+  const listIds = GD_TOPLISTS[mode] || GD_TOPLISTS.hot
+  const seen = new Set()
+  const out = []
+  for (const listId of listIds) {
+    if (out.length >= limit) break
+    let tracks = []
+    try {
+      const data = await gdRequest('playlist', { source: 'netease', id: listId })
+      tracks = data?.playlist?.tracks || []
+    } catch (err) {
+      console.error(`[gd] playlist ${listId} failed: ${err.message}`)
+      continue
+    }
+    for (const track of tracks) {
+      if (out.length >= limit) break
+      const title = String(track.name || '')
+      if (!track.id || !title) continue
+      const album = track.al || track.album || {}
+      const artist = (track.ar || track.artists || [])
+        .map(a => a.name).filter(Boolean).join(' / ')
+      const key = `${gdNormalizeName(title)}::${gdNormalizeName(artist)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({
+        id: String(track.id),
+        title,
+        artist,
+        album: String(album.name || ''),
+        artwork: album.picUrl || '',
+        platform: 'WhyMusic',
+        subSource: 'netease',
+        picId: album.pic_str || (album.pic != null ? String(album.pic) : ''),
+        lyricId: String(track.id),
+        duration: track.dt ? Math.round(track.dt / 1000) : 0,
+        type: 'music',
+      })
+    }
+  }
+  return out
+}
+
 // ── HTTP Server ──────────────────────────────────────────────────
 
 const MIME_TYPES = {
@@ -401,13 +822,121 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    // ── API: /api/yt-search ──────────────────────────────
+    // YouTube 搜尋（供 Audiomack 無源歌曲的播放 fallback 使用）
+    if (pathname === '/api/yt-search') {
+      const keyword = url.searchParams.get('q')
+      if (!keyword) {
+        jsonResponse(res, { error: 'Missing q parameter' }, 400)
+        return
+      }
+      try {
+        const results = await searchYouTube(keyword)
+        jsonResponse(res, results)
+      } catch (err) {
+        console.error('[yt-search] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
+      return
+    }
+
+    // ── API: /api/why-search ──────────────────────────────
+    // GD Music 多源聚合搜尋（netease / joox 並發）
+    if (pathname === '/api/why-search') {
+      const keyword = url.searchParams.get('q')
+      const type = url.searchParams.get('type') || 'music'
+      const page = parseInt(url.searchParams.get('page') || '1', 10)
+      const count = parseInt(url.searchParams.get('count') || '20', 10)
+      if (!keyword) {
+        jsonResponse(res, { error: 'Missing q parameter' }, 400)
+        return
+      }
+      try {
+        // 歌曲走多子源聚合；專輯/歌單/歌手只有 Audiomack 子源提供
+        // （GD 上游沒有這些搜尋類型），故單獨走 Audiomack 再改掛 WhyMusic
+        const results = type === 'music'
+          ? await searchWhyMusic(keyword, page, count)
+          : (await searchAudiomack(keyword, type, page)).map(audiomackContainerToWhyItem)
+        jsonResponse(res, { data: results })
+      } catch (err) {
+        console.error('[why-search] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
+      return
+    }
+
+    // ── API: /api/why-url ─────────────────────────────────
+    // 取 GD Music 音源 URL。帶 title/artist 時，指定源拿不到會跨源找同一首歌
+    if (pathname === '/api/why-url') {
+      const songId = url.searchParams.get('id') || ''
+      const source = url.searchParams.get('source') || ''
+      const bitrate = parseInt(url.searchParams.get('br') || String(GD_BITRATE), 10)
+      const title = url.searchParams.get('title') || ''
+      const artist = url.searchParams.get('artist') || ''
+      if (!songId && !title) {
+        jsonResponse(res, { error: 'Missing id or title parameter' }, 400)
+        return
+      }
+      try {
+        const resolved = await resolveWhyMusicUrl({ id: songId, source, bitrate, title, artist })
+        if (!resolved) {
+          jsonResponse(res, { error: 'No playable GD Music source found' }, 404)
+          return
+        }
+        jsonResponse(res, resolved)
+      } catch (err) {
+        console.error('[gd-url] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
+      return
+    }
+
+    // ── API: /api/why-lyric ───────────────────────────────
+    if (pathname === '/api/why-lyric') {
+      const lyricId = url.searchParams.get('id')
+      const source = url.searchParams.get('source') || GD_SOURCES[0]
+      if (!lyricId) {
+        jsonResponse(res, { error: 'Missing id parameter' }, 400)
+        return
+      }
+      try {
+        jsonResponse(res, await getWhyMusicLyric(lyricId, source))
+      } catch (err) {
+        console.error('[gd-lyric] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
+      return
+    }
+
+    // ── API: /api/why-pic ─────────────────────────────────
+    if (pathname === '/api/why-pic') {
+      const picId = url.searchParams.get('id')
+      const source = url.searchParams.get('source') || GD_SOURCES[0]
+      const size = parseInt(url.searchParams.get('size') || '500', 10)
+      if (!picId) {
+        jsonResponse(res, { error: 'Missing id parameter' }, 400)
+        return
+      }
+      try {
+        jsonResponse(res, { url: await getWhyMusicPic(picId, source, size) })
+      } catch (err) {
+        console.error('[gd-pic] Error:', err.message)
+        jsonResponse(res, { error: err.message }, 500)
+      }
+      return
+    }
+
     // ── API: /api/recommend ───────────────────────────────
-    // 推薦香港流行曲：hot=熱門、new=最新
+    // 推薦：new=香港電台中文歌曲龍虎榜、hot=雲音樂熱歌榜（皆為 GD Music，可播放）
+    // 帶 source=audiomack 則回舊的 Audiomack 推薦（多數曲目無播放權限）
     if (pathname === '/api/recommend') {
       const mode = url.searchParams.get('mode') || 'hot'
       const limit = parseInt(url.searchParams.get('limit') || '40', 10)
+      const source = url.searchParams.get('source') || 'gd'
       try {
-        const results = await recommendAudiomack(mode, limit)
+        const results = source === 'audiomack'
+          ? await recommendAudiomack(mode, limit)
+          : await recommendWhyMusic(mode, limit)
         jsonResponse(res, { mode, data: results })
       } catch (err) {
         console.error('[recommend] Error:', err.message)
@@ -439,17 +968,30 @@ const server = http.createServer(async (req, res) => {
       const songId = url.searchParams.get('id')
       const platform = url.searchParams.get('platform') || 'Audiomack'
       const fileTitle = url.searchParams.get('title') || 'song'
+      const fileArtist = url.searchParams.get('artist') || ''
       if (!songId) {
         jsonResponse(res, { error: 'Missing id parameter' }, 400)
         return
       }
-      if (platform !== 'Audiomack') {
-        jsonResponse(res, { error: `Platform not supported: ${platform}` }, 400)
-        return
-      }
       let mediaUrl
       try {
-        mediaUrl = await getAudiomackMedia(songId)
+        if (platform === 'Audiomack') {
+          mediaUrl = await getAudiomackMedia(songId)
+        } else if (platform === 'Youtube' || platform === 'YouTube') {
+          mediaUrl = await getYouTubeMedia(songId)
+        } else if (platform === 'WhyMusic') {
+          const resolved = await resolveWhyMusicUrl({
+            id: songId,
+            source: url.searchParams.get('source') || '',
+            bitrate: parseInt(url.searchParams.get('br') || String(GD_BITRATE), 10),
+            title: fileTitle,
+            artist: fileArtist,
+          })
+          mediaUrl = resolved?.url || null
+        } else {
+          jsonResponse(res, { error: `Platform not supported: ${platform}` }, 400)
+          return
+        }
       } catch (err) {
         console.error(`[download] Failed for ${songId}:`, err.message)
         jsonResponse(res, { error: `Failed to get media: ${err.message}` }, 500)
@@ -526,7 +1068,11 @@ const server = http.createServer(async (req, res) => {
         return
       }
       const tracks = await getAudiomackAlbumOrSheet(id, slug, artist)
-      jsonResponse(res, tracks)
+      // 專輯曲目改掛 WhyMusic：播放時才會走聚合分支，Audiomack 對該曲
+      // 無授權（1005）時還能跨子源救援
+      jsonResponse(res, Array.isArray(tracks)
+        ? tracks.map(t => ({ ...t, platform: 'WhyMusic', subSource: AUDIOMACK_SOURCE }))
+        : tracks)
       return
     }
 
@@ -549,47 +1095,17 @@ const server = http.createServer(async (req, res) => {
           mediaUrl = await getAudiomackMedia(playId)
         } else if (playPlatform === 'Youtube' || playPlatform === 'YouTube') {
           // YouTube: 後端調用 player API 拿音頻 URL
-          const body = JSON.stringify({
-            context: {
-              client: {
-                clientName: 'ANDROID_MUSIC',
-                clientVersion: '6.14.50',
-                hl: 'en',
-                gl: 'GB',
-                deviceMake: '',
-                deviceModel: '',
-                userAgent: 'com.google.android.apps.youtube.music/6.14.50 (Linux; U; Android 13; GB) gzip',
-                osName: 'Android',
-                osVersion: '13',
-                platform: 'MOBILE',
-                screenWidthPoints: 689,
-                screenHeightPoints: 963,
-                screenPixelDensity: 1,
-                timeZone: 'Europe/Amsterdam',
-              },
-              user: { enableSafetyMode: false },
-              request: { internalExperimentFlags: [], consistencyTokenJars: [] },
-            },
-            contentCheckOk: true,
-            racyCheckOk: true,
-            video_id: playId,
+          mediaUrl = await getYouTubeMedia(playId)
+        } else if (playPlatform === 'WhyMusic') {
+          // GD Music: 指定子音源直取，拿不到則用歌名+歌手跨源救援
+          const resolved = await resolveWhyMusicUrl({
+            id: playId,
+            source: url.searchParams.get('source') || '',
+            bitrate: parseInt(url.searchParams.get('br') || String(GD_BITRATE), 10),
+            title: url.searchParams.get('title') || '',
+            artist: url.searchParams.get('artist') || '',
           })
-          const ytResp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body,
-          })
-          if (ytResp.ok) {
-            const ytData = await ytResp.json()
-            const formats = ytData.streamingData?.formats || []
-            const adaptiveFormats = ytData.streamingData?.adaptiveFormats || []
-            // 找音頻格式
-            const allFormats = [...adaptiveFormats, ...formats].filter(f => f.url)
-            // 優先選音頻格式
-            const audioFormats = allFormats.filter(f => (f.mimeType || '').includes('audio'))
-            const candidates = audioFormats.length > 0 ? audioFormats : allFormats
-            mediaUrl = candidates[0]?.url || null
-          }
+          mediaUrl = resolved?.url || null
         } else if (playPlatform === '猫耳FM') {
           // 猫耳FM: 後端調用 getsound API 拿音源 URL
           const mRes = await fetch(`https://www.missevan.com/sound/getsound?soundid=${playId}`, {

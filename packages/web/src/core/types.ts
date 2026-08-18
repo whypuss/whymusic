@@ -31,6 +31,20 @@ export interface MusicItem {
   musicList?: MusicItem[]
   /** 後端返回的音頻時長 */
   duration?: number
+  /** GD 聚合音源的子音源（netease / joox…），取音源時需原樣帶回 */
+  subSource?: string
+  /** GD 聚合音源的封面 ID（供 /api/why-pic 解析） */
+  picId?: string
+  /** GD 聚合音源的歌詞 ID（供 /api/why-lyric 解析） */
+  lyricId?: string
+  /** 內部 fallback 標記（避免重複嘗試） */
+  _gdFallbackAttempted?: boolean
+  /** 內部 fallback 標記（避免重複嘗試下載 fallback） */
+  _dlFallbackAttempted?: boolean
+  /** 專輯詳情 context（供播放失敗自動跳下一首） */
+  _albumDetail?: MusicItem
+  /** 專輯內 track 索引 */
+  _trackIndex?: number
 }
 
 /**

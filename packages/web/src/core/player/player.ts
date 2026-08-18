@@ -83,9 +83,13 @@ export class Player {
       this.audio.src = url
       return this.audio.play()
     } else {
-      // 普通音頻（mp3/aac 等）— 一律走代理繞過 CORS
-      const proxiedUrl = `/api/proxy?url=${encodeURIComponent(url)}&method=GET`
-      this.audio.src = proxiedUrl
+      // 普通音頻（mp3/aac 等）— 跨域音源走代理繞過 CORS。
+      // 同源 URL（後端 /api/play 等串流端點）不能再包一層代理：/api/proxy 會把
+      // url 參數丟給 fetch，而相對路徑不是合法的 fetch 目標，會直接 Invalid URL。
+      const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin)
+      this.audio.src = isSameOrigin
+        ? url
+        : `/api/proxy?url=${encodeURIComponent(url)}&method=GET`
       return this.audio.play()
     }
   }

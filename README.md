@@ -12,11 +12,50 @@
 
 | 音源 | 說明 |
 |------|------|
-| Audiomack | 歐美音樂為主，無需在瀏覽器端設定憑證 |
-| YouTube | 音視頻搜尋，需透過自托管後端代理 |
+| WhyMusic | **主音源**。單一來源，底下聚合三個子音源（見下） |
 | 猫耳FM | 聲劇、配音、動漫 |
+| YouTube | 搜尋仍可用，但播放已失效（見下） |
+
+WhyMusic 的子音源：
+
+| 子音源 | 覆蓋範圍 | 取得方式 |
+|--------|----------|----------|
+| `netease` | 簡體華語曲庫最完整，附歌詞與封面 | 經 GD 上游 |
+| `joox` | 港台繁體、粵語與 live 版本多 | 經 GD 上游 |
+| `audiomack` | 歐美獨立音樂 / hip-hop / afrobeats | 本站 OAuth |
+
+三者並發搜尋後交錯合併、同名同歌手去重，UI 上只呈現為一個「WhyMusic」。
+單一子音源取不到音源時（GD 上游偶回空字串、Audiomack 對授權曲目回
+`1005 Not authorized`），後端會用歌名+歌手到其餘子音源找同一首歌，
+比對時做繁簡歸一化，所以查「浮誇」也能命中簡體源的「浮夸」。
 
 內置插件源碼位於 `packages/web/src/plugins/bundled/`，也可以自行新增第三方插件。
+
+#### 關於 YouTube 音源
+
+YouTube 的 `youtubei/v1/player` 端點現在對所有 client（`ANDROID_MUSIC` / `ANDROID_VR` / `IOS` /
+`TVHTML5_*` / `WEB*` / `MWEB`）都要求 PoToken（BotGuard），無憑證請求會回
+`LOGIN_REQUIRED`（`Please sign in` 或 `Sign in to confirm you're not a bot`）。
+程式碼保留了 YouTube 分支，待日後接上 PoToken 即可恢復，但目前無法取得音源，
+因此救援音源改由 WhyMusic 的其餘子音源承擔。
+
+#### WhyMusic 設定
+
+`netease` 與 `joox` 經 [GD 音樂台](https://music.gdstudio.xyz/) 的公開 API 取得，無需憑證；
+`audiomack` 走本站自己的 OAuth 實作，用 `AUDIOMACK_*` 那組金鑰。
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `WHY_MUSIC_SOURCES` | `netease,joox,audiomack` | 啟用的子音源（逗號分隔） |
+| `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子音源適用） |
+| `GD_API_URL` | `https://music-api.gdstudio.xyz/api.php` | GD 上游 API 位址 |
+
+未納入 `kuwo` 與 `bilibili`：上游的 `kuwo` 音源端點恆回空字串、`bilibili` 回 HTML，
+兩者雖能搜到歌但點下去播不出來，列進來只會變成啞彈。後端對 GD 上游回應做 TTL 快取
+（上游按 IP 限流，而伺服器所有使用者共用同一出口 IP）。
+
+搜尋類型方面，「歌曲」走三子音源聚合；「專輯」目前只有 `audiomack` 子音源提供
+（GD 上游沒有專輯搜尋），專輯內曲目同樣享有跨子音源救援。
 
 ### 為什麼不直接用 MusicFree App
 
