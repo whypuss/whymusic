@@ -151,6 +151,8 @@ export default function App() {
   const [recommendMode, setRecommendMode] = useState<'new' | 'hot'>('new')
   const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
   const [recommendLoading, setRecommendLoading] = useState(false)
+  // 沒有任何已啟用插件、或插件不提供推薦 → 要能區分於「推薦回空清單」
+  const [recommendUnsupported, setRecommendUnsupported] = useState(false)
   // 專輯/歌單詳情頁
   const [albumDetail, setAlbumDetail] = useState<MusicItem | null>(null)
   const [albumTracks, setAlbumTracks] = useState<MusicItem[]>([])
@@ -267,38 +269,32 @@ export default function App() {
     }
   }, [keyword, searchType, pluginManager])
 
-  const handleDownload = async (item: MusicItem, isFallback = false) => {
+  /**
+   * 下載。與播放同一條路：先問音源要 URL，再把那個 URL 抓成 blob 存檔。
+   * 同樣不含任何平台判斷；跨域 URL 由 /api/proxy 代抓（瀏覽器拿不到跨域 blob）。
+   */
+  const handleDownload = async (item: MusicItem) => {
     const platform = item.platform || ''
-    const downloadParams = new URLSearchParams({
-      id: String(item.id),
-      platform,
-      title: item.title || 'song',
-      artist: item.artist || '',
-    })
-    // GD 聚合音源需帶子音源，後端才能直取而不必跨源重找
-    if (item.subSource) downloadParams.set('source', item.subSource)
-    const url = `/api/download?${downloadParams.toString()}`
+    const plugin = pluginManager.getPlugin(platform)
+    if (!plugin) {
+      showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
+      return
+    }
     // 失敗重試（502 通常是伺服器重啟空窗或暫時性上游錯誤，重試一次即可）
     const attempts = [1, 2]
     for (const attempt of attempts) {
       try {
+        const media = await pluginManager.getMediaSource(plugin, item)
+        if (!media?.url) throw new Error('音源沒有回傳可下載的 URL')
+        const isSameOrigin = media.url.startsWith('/')
+          || media.url.startsWith(window.location.origin)
+        const url = isSameOrigin
+          ? media.url
+          : `/api/proxy?url=${encodeURIComponent(media.url)}&method=GET`
         const response = await fetch(url)
         if (!response.ok) {
           const err = await response.json().catch(() => null)
           const msg = err?.error || `HTTP ${response.status}`
-          // 鎖定歌曲直接拋出（不重試）
-          if (/Not authorized|1005/i.test(msg) || /Failed to get media/i.test(msg)) {
-            // 該子音源無下載權限 → 用歌名+歌手在其餘子音源找同一首歌
-            if (!isFallback && !item._dlFallbackAttempted) {
-              const altItem = await findGdFallback(item)
-              if (altItem) {
-                altItem._dlFallbackAttempted = true
-                showNotification('原音源無效，改用其他子音源下載', 'info')
-                return await handleDownload(altItem, true)
-              }
-            }
-            throw new Error(msg)
-          }
           if (attempt < attempts.length) {
             await new Promise(r => setTimeout(r, 800))
             continue
@@ -323,7 +319,7 @@ export default function App() {
         if (attempt >= attempts.length) {
           console.error('Download failed:', e)
           const msg = e instanceof Error ? e.message : String(e)
-          // 下載仍失敗（含 YouTube fallback 失敗）→ 彈窗提示
+          // 音源明確表示無權限 → 彈窗提示，不當成一般錯誤
           if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
             setLockedItem({ title: item.title || '', artist: item.artist || '' })
             return
@@ -341,95 +337,30 @@ export default function App() {
     setTimeout(() => setNotification(null), 3000)
   }
 
-  // 用歌名+歌手到 GD 聚合音源找替代音源（Audiomack 無播放權限曲目的救援路徑）
-  //
-  // 原本這裡打 /api/yt-search 用 YouTube 頂替，但 YouTube 的 player API 現在對
-  // 所有 client 都要求 PoToken（回 LOGIN_REQUIRED / "Sign in to confirm you're
-  // not a bot"），搜到了也放不出聲音，故改用 GD。
-  const findGdFallback = useCallback(async (item: MusicItem): Promise<MusicItem | null> => {
-    const query = [item.title, item.artist].filter(Boolean).join(' ')
-    if (!query.trim()) return null
-    try {
-      const response = await fetch(`/api/why-search?q=${encodeURIComponent(query)}&count=10`)
-      if (!response.ok) return null
-      const results = await response.json()
-      const list: MusicItem[] = Array.isArray(results) ? results : (results?.data || [])
-      // 挑最接近的：歌名完全相同優先，其次前綴/包含，避免配到 Live／伴奏版
-      const norm = (s?: string) => (s || '').toLowerCase().replace(/[（([【].*?[)）\]】]/g, '').replace(/\s+/g, '')
-      const target = norm(item.title)
-      const targetArtist = norm(item.artist)
-      const rank = (s: MusicItem) => {
-        const t = norm(s.title)
-        let score = 0
-        if (target && t === target) score += 20
-        else if (target && (t.startsWith(target) || target.startsWith(t))) score += 10
-        else if (target && t.includes(target)) score += 5
-        const a = norm(s.artist)
-        if (targetArtist && a && (a.includes(targetArtist) || targetArtist.includes(a))) score += 8
-        return score
-      }
-      const pick = list
-        .filter(s => rank(s) > 0)
-        .sort((a, b) => rank(b) - rank(a))[0]
-      return pick || null
-    } catch {
-      return null
-    }
-  }, [])
-
+  /**
+   * 播放。播放器只做一件事：問音源要一個可播的 URL，然後播。
+   * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
+   * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
+   */
   const play = async (item: MusicItem) => {
     setPlayingItem(item)
     try {
-      let audioUrl: string | null = null
       const platform = item.platform || ''
-
-      if (platform === 'WhyMusic') {
-        // 聚合音源：後端依 subSource 解析（netease/joox 走 GD 上游、audiomack
-        // 走 OAuth）並串流。帶上歌名/歌手，後端在該子音源拿不到音源時可跨子源
-        // 找同一首歌，省一次前端往返。
-        const params = new URLSearchParams({
-          id: String(item.id),
-          platform: 'WhyMusic',
-          source: item.subSource || '',
-          title: item.title || '',
-          artist: item.artist || '',
-        })
-        audioUrl = `/api/play?${params.toString()}`
-      } else if (platform === 'Youtube' || platform === 'YouTube') {
-        // YouTube: 後端 player API 拿音頻 URL
-        const mediaUrl = `/api/play?id=${encodeURIComponent(String(item.id))}&platform=Youtube`
-        audioUrl = mediaUrl
-      } else {
-        // 其他平台：嘗試 getMediaSource，失敗後回 /api/play
-        const plugin = pluginManager.getPlugin(platform)
-        const getMediaSourceFn = plugin?.getMediaSource
-        if (getMediaSourceFn) {
-          try {
-            const result = await getMediaSourceFn(item)
-            if (result?.url) {
-              audioUrl = `/api/proxy?url=${encodeURIComponent(result.url)}&method=GET`
-              console.log('[play] Proxied URL for', platform)
-            }
-          } catch { /* ignore */ }
-        }
-        // Fallback: 後端 /api/play
-        if (!audioUrl) {
-          audioUrl = `/api/play?id=${encodeURIComponent(String(item.id))}&platform=${encodeURIComponent(platform)}`
-        }
-      }
-
-      if (!audioUrl) {
-        showNotification('無法獲取音源 URL', 'error')
+      const plugin = pluginManager.getPlugin(platform)
+      if (!plugin) {
+        showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
         return
       }
+      const media = await pluginManager.getMediaSource(plugin, item)
+      if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
 
-      await player.play(audioUrl)
+      await player.play(media.url)
       setIsPlaying(true)
     } catch (e: any) {
       console.error('Get media source error:', e)
       const errMsg = e?.message || e || ''
 
-      // 專輯內某首無源（常見於 audiomack 子源的授權曲目）→ 跳下一首，
+      // 專輯內某首無源（常見於有授權限制的曲目）→ 跳下一首，
       // 不要讓整張專輯停在一首放不出來的歌上
       const album = item._albumDetail
       if (album && item._trackIndex !== undefined) {
@@ -442,17 +373,8 @@ export default function App() {
         }
       }
 
-      // 單曲無源 → 用歌名+歌手在其餘子音源找替代（後端已試過一輪，
-      // 這裡多一層是為了處理後端整條解析失敗、連 title 都沒帶到的情況）
-      if (!album && !item._gdFallbackAttempted) {
-        const altItem = await findGdFallback(item)
-        if (altItem) {
-          altItem._gdFallbackAttempted = true
-          console.log(`[play] fallback to alternate sub-source: ${altItem.title}`)
-          showNotification('原音源無效，已改用其他子音源播放', 'info')
-          return await play(altItem)
-        }
-      }
+      // 單曲無源就直接告知。跨源救援是音源自己的責任（WhyMusic 的後端會用
+      // 歌名+歌手到其餘子音源找同一首歌），前端不再重試一輪。
       if (!album) {
         setLockedItem({ title: item.title || '', artist: item.artist || '' })
         return
@@ -483,19 +405,34 @@ export default function App() {
     await search(nextPage, true)
   }
 
-  // 載入推薦香港流行曲（最新/熱門）
+  // 載入推薦（最新/熱門）。推薦是音源的能力，逐一問已啟用的插件要，
+  // 沒裝音源就沒有推薦 —— 這樣才與「播放器不認識來源」一致。
   const loadRecommend = useCallback(async (mode: 'new' | 'hot') => {
     setRecommendMode(mode)
     setRecommendLoading(true)
+    setRecommendUnsupported(false)
     try {
-      const response = await fetch(`/api/recommend?mode=${mode}&limit=40`)
-      if (!response.ok) {
-        const err = await response.json().catch(() => null)
-        throw new Error(err?.error || `HTTP ${response.status}`)
+      await waitForPlugins()
+      const enabled = pluginManager.getEnabledPlugins()
+      if (enabled.length === 0) {
+        setRecommendSongs([])
+        setRecommendUnsupported(true)
+        return
       }
-      const data = await response.json()
-      const songs: MusicItem[] = Array.isArray(data) ? data : (data?.data || [])
+      let songs: MusicItem[] = []
+      let supported = false
+      for (const plugin of enabled) {
+        try {
+          const list = await pluginManager.getRecommendForPlugin(plugin.name, mode, 40)
+          if (list === null) continue  // 該插件不提供推薦
+          supported = true
+          songs = songs.concat(list)
+        } catch (e) {
+          console.error(`[recommend] ${plugin.name} 失敗:`, e)
+        }
+      }
       setRecommendSongs(songs)
+      setRecommendUnsupported(!supported)
     } catch (e) {
       console.error('Load recommend failed:', e)
       setRecommendSongs([])
@@ -529,32 +466,25 @@ export default function App() {
     }
   }
 
-  // 從後端載入專輯歌曲列表
+  // 專輯曲目由音源提供（插件的 getAlbumInfo），app 不直接打後端
   const loadAlbumTracks = async (item: MusicItem) => {
     setAlbumLoading(true)
     try {
-      const id = String(item.id || '')
-      const slug = item.url_slug || ''
-      const artist = item.artist || ''
-      if (!slug || !artist) {
-        setErrorMessage('專輯資訊不完整，無法載入歌曲列表')
-        setAlbumLoading(false)
+      const platform = item.platform || ''
+      const plugin = pluginManager.getPlugin(platform)
+      if (!plugin) {
+        setErrorMessage(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`)
         return
       }
-      const response = await fetch(`/api/album?id=${encodeURIComponent(id)}&slug=${encodeURIComponent(slug)}&artist=${encodeURIComponent(artist)}`)
-      if (response.ok) {
-        const data = await response.json()
-        if (Array.isArray(data)) {
-          setAlbumTracks(data)
-        } else {
-          setErrorMessage(`載入專輯失敗: ${data.error || '未知錯誤'}`)
-        }
-      } else {
-        setErrorMessage('載入專輯失敗')
+      const tracks = await pluginManager.getAlbumInfoForPlugin(plugin.name, item)
+      if (tracks === null) {
+        setErrorMessage(`音源「${plugin.name}」不支援專輯詳情`)
+        return
       }
+      setAlbumTracks(tracks)
     } catch (e) {
       console.error('Load album tracks failed:', e)
-      setErrorMessage('載入專輯失敗')
+      setErrorMessage(`載入專輯失敗: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setAlbumLoading(false)
     }
@@ -627,6 +557,8 @@ export default function App() {
       setPluginError(null)
       // 帶上版本，使用者才看得出到底有沒有真的換版（先前只說「成功」，
       // 抓回舊碼時完全看不出來）
+      // 清掉舊清單，回推薦頁時會用新音源重新載入
+      setRecommendSongs([])
       const version = pluginManager.getPlugin(registered)?.version || '?'
       showNotification(`已安裝 ${registered} v${version}`, 'success')
     } catch (e: any) {
@@ -649,6 +581,9 @@ export default function App() {
     // 已安裝狀態（按鈕仍是「更新／已啟用／移除」、版號變成 v?），要重載才正確
     setPluginKey(k => k + 1)
     setPluginError(null)
+    // 音源沒了，已載入的推薦清單也不再可播，清掉讓它重新判定
+    setRecommendSongs([])
+    setResults([])
     showNotification(`插件「${name}」已移除`, 'success')
     savePluginsToStorage()
   }
@@ -913,7 +848,11 @@ export default function App() {
               {!recommendLoading &&
                 recommendSongs.length === 0 &&
                 currentView === 'recommend' && (
-                  <div className="text-center text-gray-500 py-10">尚無推薦歌曲。</div>
+                  <div className="text-center text-gray-500 py-10">
+                    {recommendUnsupported
+                      ? '推薦需要音源。請到下方「插件」頁安裝。'
+                      : '尚無推薦歌曲。'}
+                  </div>
               )}
               <div className="space-y-2">
                 {recommendSongs

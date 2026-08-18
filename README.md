@@ -37,8 +37,28 @@ WhyMusic 的子音源：
 改音源邏輯只要換掉 `plugins/whymusic.js`、在插件頁按「更新」即可生效，
 不必重新 build 前端。
 
-音源目前只服務**搜尋**：推薦頁與播放直接走後端 `/api/recommend`、`/api/play`，
-沒裝音源也能用。
+### 播放器與音源完全分離
+
+前端不直接呼叫任何音源 API。搜尋、推薦、播放、下載、專輯詳情全部經插件介面：
+
+| 功能 | 插件方法 |
+|------|----------|
+| 搜尋 | `search(query, page, type)` |
+| 推薦 | `getRecommend(mode, limit)`（musicweb 擴充，非 MusicFree 標準） |
+| 播放 / 下載 | `getMediaSource(item)` |
+| 專輯曲目 | `getAlbumInfo(albumItem)` |
+| 歌詞 / 封面 | `getLyric` / `getMusicArtwork` |
+
+`play()` 裡沒有任何平台名稱的判斷 —— 它只問音源要一個可播的 URL 然後播。
+要不要跨源救援、要不要 OAuth 簽名、音質怎麼選，全是插件（與其後端）的事，
+**加新音源不必改前端**。
+
+因此沒裝音源時整個 app 沒有內容：推薦與搜尋都顯示「需要音源」，沒有任何可播
+的東西。插件未實作某個方法時回 null，UI 會明確說「此音源不支援」，而不是
+顯示空清單讓人以為壞了。
+
+前端剩下的兩個 `/api/` 呼叫都不是音源 API：`/api/proxy`（跨域代抓）與
+`/plugins/*.js`（插件安裝），屬基礎設施。
 
 執行時不依賴任何外部託管站：插件與 app 同源。使用者也可以在插件頁貼 URL
 安裝第三方插件，外部 URL 會由後端經 `/api/proxy` 代抓（瀏覽器不必連得到

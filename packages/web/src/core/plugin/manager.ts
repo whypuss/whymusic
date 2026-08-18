@@ -2,6 +2,22 @@ import { Plugin, MusicItem, SearchType } from '../types'
 import { PluginRunner } from './runner'
 
 /**
+ * 把插件回傳的各種形狀統一成陣列。
+ *
+ * MusicFree 插件的回傳格式不只一種：search 回 { isEnd, data }，而
+ * getAlbumInfo / getMusicSheetInfo 回 { musicList }，各類搜尋另有
+ * albumList / artistList / sheetList。只認 data 會讓一半的方法靜默回空。
+ */
+function normalizeItemList(result: any): any[] {
+  if (Array.isArray(result)) return result
+  if (!result || typeof result !== 'object') return []
+  for (const key of ['data', 'musicList', 'albumList', 'artistList', 'sheetList']) {
+    if (Array.isArray(result[key])) return result[key]
+  }
+  return []
+}
+
+/**
  * 插件管理器
  * 完全照搬原項目 MusicFree 的實現邏輯
  */
@@ -161,23 +177,46 @@ export class PluginManager {
     if (!this.enabled.has(p.name)) return []
     if (!p.search) return []
     
-    try {
-      const result: any = await p.search(keyword, page, type) ?? {}
-      if (Array.isArray(result.data)) {
-        result.data.forEach((item: any) => {
-          if (!item.platform) item.platform = p.name
-          if (!item.source) item.source = p.name
-        })
-        return result.data
-      } else if (Array.isArray(result)) {
-        result.forEach((item: any) => {
-          if (!item.platform) item.platform = p.name
-          if (!item.source) item.source = p.name
-        })
-        return result
-      }
-    } catch { /* ignore */ }
-    return []
+    // 錯誤往外丟：第三方插件壞掉時，靜默回空陣列會讓使用者看到「未找到結果」，
+    // 完全無法分辨是真的沒有這首歌、還是插件出錯
+    const result: any = await p.search(keyword, page, type) ?? {}
+    return this.tagItems(normalizeItemList(result), p.name)
+  }
+
+  /** 補上 platform/source，讓 app 不必知道 item 來自哪個插件 */
+  private tagItems(items: any[], pluginName: string): MusicItem[] {
+    items.forEach((item: any) => {
+      if (!item.platform) item.platform = pluginName
+      if (!item.source) item.source = pluginName
+    })
+    return items as MusicItem[]
+  }
+
+  /**
+   * 推薦歌曲。musicweb 擴充介面（非 MusicFree 標準），插件未實作時回 null，
+   * 讓 UI 能明確告知「此音源不支援推薦」而不是顯示空清單。
+   */
+  async getRecommendForPlugin(
+    name: string, mode: string, limit = 40,
+  ): Promise<MusicItem[] | null> {
+    const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
+    if (!p || !this.enabled.has(p.name)) return null
+    const fn = (p as any).getRecommend
+    if (typeof fn !== 'function') return null
+    const result: any = await fn.call(p, mode, limit) ?? {}
+    return this.tagItems(normalizeItemList(result), p.name)
+  }
+
+  /** 專輯內曲目。插件未實作時回 null */
+  async getAlbumInfoForPlugin(
+    name: string, albumItem: MusicItem,
+  ): Promise<MusicItem[] | null> {
+    const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
+    if (!p || !this.enabled.has(p.name)) return null
+    const fn = (p as any).getAlbumInfo
+    if (typeof fn !== 'function') return null
+    const result: any = await fn.call(p, albumItem) ?? {}
+    return this.tagItems(normalizeItemList(result), p.name)
   }
 
   /**
@@ -185,23 +224,17 @@ export class PluginManager {
    * 原項目：{ url, headers, userAgent }
    * 原項目：如果沒有 getMediaSource，直接返回 musicItem.url
    */
+  // 錯誤往外丟（不再 catch 成 null）：播放失敗的原因只有插件知道，
+  // 吞掉之後 UI 只能說「無法獲取音源」，使用者與開發者都無從判斷。
   async getMediaSource(plugin: Plugin, item: MusicItem): Promise<{ url: string; headers?: Record<string, string> } | null> {
-    try {
-      if (!plugin.getMediaSource) {
-        return { url: item.url || '' }
-      }
-      const result: any = await plugin.getMediaSource(item) ?? { url: item.url }
-      if (!result.url) {
-        return null
-      }
-      // 原項目：formatAuthUrl 處理 URL 中的 Basic Auth
-      return {
-        url: result.url,
-        headers: result.headers,
-      }
-    } catch (err) {
-      console.error(`插件 ${plugin.name} 獲取音源失敗:`, err)
-      return null
+    if (!plugin.getMediaSource) {
+      return item.url ? { url: item.url } : null
+    }
+    const result: any = await plugin.getMediaSource(item) ?? { url: item.url }
+    if (!result.url) return null
+    return {
+      url: result.url,
+      headers: result.headers,
     }
   }
 }
