@@ -226,7 +226,7 @@ export class PluginManager {
    */
   // 錯誤往外丟（不再 catch 成 null）：播放失敗的原因只有插件知道，
   // 吞掉之後 UI 只能說「無法獲取音源」，使用者與開發者都無從判斷。
-  async getMediaSource(plugin: Plugin, item: MusicItem): Promise<{ url: string; headers?: Record<string, string> } | null> {
+  async getMediaSource(plugin: Plugin, item: MusicItem): Promise<{ url: string; headers?: Record<string, string>; source?: string } | null> {
     if (!plugin.getMediaSource) {
       return item.url ? { url: item.url } : null
     }
@@ -235,6 +235,9 @@ export class PluginManager {
     return {
       url: result.url,
       headers: result.headers,
+      // 音源可回報它實際用了哪個子源。播不出來時呼叫端要靠這個決定排除誰 ——
+      // 不能用 item.subSource，因為後端可能已經跨源救援換過來源了。
+      source: result.source,
     }
   }
 }

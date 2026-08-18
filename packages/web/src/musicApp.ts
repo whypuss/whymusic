@@ -44,6 +44,8 @@ export type PlayQueue = { list: MusicItem[]; index: number; order: PlayOrder }
 
 /** 自動續播時連續失敗的上限。超過就停手，不要無止境地打上游 */
 const MAX_AUTO_SKIP = 8
+/** 同一首歌最多換幾次子音源。子源只有兩三個，超過就是真的沒有可播的來源 */
+const MAX_SOURCE_RETRY = 2
 
 /**
  * 依播放順序挑下一首的索引，跳過 skip 裡的（已知播不出來的）。
@@ -441,18 +443,22 @@ export function useMusicApp() {
    * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
    * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
    *
-   * opts.auto  這次播放是自動續播觸發的（而非使用者點的）
-   * opts.skip  本輪已知播不出來的索引，跨遞迴共用同一個 Set
+   * opts.auto     這次播放是自動續播觸發的（而非使用者點的）
+   * opts.skip     本輪已知播不出來的索引，跨遞迴共用同一個 Set
+   * opts.exclude  這首歌已知播不出來的子音源，換源重試時累積
    */
   const play = async (
     item: MusicItem,
     queue?: PlayQueue,
-    opts?: { auto?: boolean; skip?: Set<number> },
+    opts?: { auto?: boolean; skip?: Set<number>; exclude?: string[] },
   ) => {
     if (queue) queueRef.current = queue
     const auto = opts?.auto ?? false
     const skip = opts?.skip ?? new Set<number>()
+    const exclude = opts?.exclude ?? []
     setPlayingItem(item)
+    // 這次實際用的是哪個子源。要在 catch 裡讀，所以宣告在 try 外面
+    let usedSource: string | undefined
     try {
       const platform = item.platform || ''
       const plugin = pluginManager.getPlugin(platform)
@@ -460,14 +466,27 @@ export function useMusicApp() {
         showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
         return
       }
-      const media = await pluginManager.getMediaSource(plugin, item)
+      const media = await pluginManager.getMediaSource(
+        plugin,
+        exclude.length > 0 ? { ...item, _exclude: exclude } : item,
+      )
       if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
+      usedSource = media.source || item.subSource
 
       await player.play(media.url)
       setIsPlaying(true)
     } catch (e: any) {
       const errMsg = e?.message || e || ''
       console.error(`[play] ${item.title} 失敗:`, errMsg)
+
+      // 音源給了 URL 但實際播不出來（CDN 對該地區回 403、容器格式不支援…）→
+      // 排除這個子源，請音源換一個再試同一首歌。這是伺服器端看不到的失敗，
+      // 它那邊只知道「解析成功」。
+      if (usedSource && !exclude.includes(usedSource) && exclude.length < MAX_SOURCE_RETRY) {
+        const nextExclude = [...exclude, usedSource]
+        console.log(`[play] 子源 ${usedSource} 播不出來，排除後重試：${item.title}`)
+        return await play(item, undefined, { auto, skip, exclude: nextExclude })
+      }
 
       const q = queueRef.current
       if (q.index >= 0) skip.add(q.index)

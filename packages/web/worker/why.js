@@ -155,15 +155,19 @@ export function jsonResponse(body, status = 200) {
 // 三者各自補足對方的缺口：netease 簡體曲庫最全、joox 港台繁體與粵語 live 版本多、
 // audiomack 則是歐美獨立音樂 / hip-hop / afrobeats。
 //
-// 未納入 kuwo 與 bilibili：2026-08-18 實測 kuwo 的 url 端點恆回空字串、
-// bilibili 回 HTML，兩者搜尋雖可用但點下去播不出來，列進來只會變成啞彈。
-// YouTube 亦未納入：全 client 需 PoToken/BotGuard，非本站能修。
+// 未納入的來源與原因：
+//   kuwo      url 端點恆回空字串（2026-08-18 實測）
+//   bilibili  回 HTML，搜得到但播不出來
+//   YouTube   全 client 需 PoToken/BotGuard，非本站能修
+//   audiomack 播放不穩：URL 解析成功但常在客戶端播不出來，且疑似有地域限制
+//             （同一首歌從不同地區的 CF 邊緣結果不同）。它獨有的曲目沒有替代
+//             來源可救援，留著只會讓使用者隨機撞到放不出來的歌。
 const GD_API = 'https://music-api.gdstudio.xyz/api.php'
 
 /** audiomack 不由 GD 代理，需與其餘子源分流處理 */
 const AUDIOMACK_SOURCE = 'audiomack'
 
-const WHY_SOURCES = ('netease,joox,audiomack')
+const WHY_SOURCES = ('netease,joox')
   .split(',').map(s => s.trim()).filter(Boolean)
 /** 由上游 GD API 代理的子源 */
 const GD_SOURCES = WHY_SOURCES.filter(s => s !== AUDIOMACK_SOURCE)
@@ -409,9 +413,13 @@ async function getWhySubSourceUrl(songId, source, bitrate = GD_BITRATE) {
  * 1005 Not authorized），用歌名+歌手到其餘子源找同一首歌再試。
  * 這是跨子源救援路徑，繁簡歸一化讓「浮誇」也能在簡體源命中。
  */
-async function resolveWhyMusicUrl({ id, source, bitrate, title, artist }) {
+async function resolveWhyMusicUrl({ id, source, bitrate, title, artist, exclude }) {
+  // exclude：呼叫端已知播不出來的子源。伺服器端只看得到「解析失敗」，但有些
+  // URL 解析成功卻在客戶端播不出來（CDN 對該地區回 403、容器格式不支援…），
+  // 那種情況只有前端知道，所以要讓它把壞掉的子源排除後重新解析。
+  const skip = new Set(Array.isArray(exclude) ? exclude : [])
   const primary = source || WHY_SOURCES[0]
-  if (id) {
+  if (id && !skip.has(primary)) {
     try {
       const direct = await getWhySubSourceUrl(id, primary, bitrate)
       if (direct) return { url: direct, source: primary, id }
@@ -423,6 +431,7 @@ async function resolveWhyMusicUrl({ id, source, bitrate, title, artist }) {
   const keyword = [title, artist].filter(Boolean).join(' ').trim()
   if (!keyword) return null
   for (const candidateSource of WHY_SOURCES) {
+    if (skip.has(candidateSource)) continue
     // 主源已用 id 直取過，不重複試
     if (candidateSource === primary && id) continue
     try {

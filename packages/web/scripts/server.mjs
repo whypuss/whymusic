@@ -449,7 +449,7 @@ const GD_API = process.env.GD_API_URL || 'https://music-api.gdstudio.xyz/api.php
 /** audiomack 不由 GD 代理，需與其餘子源分流處理 */
 const AUDIOMACK_SOURCE = 'audiomack'
 
-const WHY_SOURCES = (process.env.WHY_MUSIC_SOURCES || 'netease,joox,audiomack')
+const WHY_SOURCES = (process.env.WHY_MUSIC_SOURCES || 'netease,joox')
   .split(',').map(s => s.trim()).filter(Boolean)
 /** 由上游 GD API 代理的子源 */
 const GD_SOURCES = WHY_SOURCES.filter(s => s !== AUDIOMACK_SOURCE)
@@ -695,9 +695,13 @@ async function getWhySubSourceUrl(songId, source, bitrate = GD_BITRATE) {
  * 1005 Not authorized），用歌名+歌手到其餘子源找同一首歌再試。
  * 這是跨子源救援路徑，繁簡歸一化讓「浮誇」也能在簡體源命中。
  */
-async function resolveWhyMusicUrl({ id, source, bitrate, title, artist }) {
+async function resolveWhyMusicUrl({ id, source, bitrate, title, artist, exclude }) {
+  // exclude：呼叫端已知播不出來的子源。伺服器端只看得到「解析失敗」，但有些
+  // URL 解析成功卻在客戶端播不出來（CDN 對該地區回 403、容器格式不支援…），
+  // 那種情況只有前端知道，所以要讓它把壞掉的子源排除後重新解析。
+  const skip = new Set(Array.isArray(exclude) ? exclude : [])
   const primary = source || WHY_SOURCES[0]
-  if (id) {
+  if (id && !skip.has(primary)) {
     try {
       const direct = await getWhySubSourceUrl(id, primary, bitrate)
       if (direct) return { url: direct, source: primary, id }
@@ -709,6 +713,7 @@ async function resolveWhyMusicUrl({ id, source, bitrate, title, artist }) {
   const keyword = [title, artist].filter(Boolean).join(' ').trim()
   if (!keyword) return null
   for (const candidateSource of WHY_SOURCES) {
+    if (skip.has(candidateSource)) continue
     // 主源已用 id 直取過，不重複試
     if (candidateSource === primary && id) continue
     try {
@@ -891,10 +896,13 @@ const server = http.createServer(async (req, res) => {
       try {
         // 歌曲走多子源聚合；專輯/歌單/歌手只有 Audiomack 子源提供
         // （GD 上游沒有這些搜尋類型），故單獨走 Audiomack 再改掛 WhyMusic
-        const results = type === 'music'
-          ? await searchWhyMusic(keyword, page, count)
-          : (await searchAudiomack(keyword, type, page)).map(audiomackContainerToWhyItem)
-        jsonResponse(res, { data: results })
+        // 只支援歌曲。專輯／歌單／歌手原本只有 audiomack 提供，該子源已移除，
+        // 留著這條路只會回播不出來的內容。
+        if (type !== 'music') {
+          jsonResponse(res, { error: `不支援的搜尋類型：${type}`, data: [] }, 400)
+          return
+        }
+        jsonResponse(res, { data: await searchWhyMusic(keyword, page, count) })
       } catch (err) {
         console.error('[why-search] Error:', err.message)
         jsonResponse(res, { error: err.message }, 500)
@@ -910,12 +918,15 @@ const server = http.createServer(async (req, res) => {
       const bitrate = parseInt(url.searchParams.get('br') || String(GD_BITRATE), 10)
       const title = url.searchParams.get('title') || ''
       const artist = url.searchParams.get('artist') || ''
+      // 前端已知播不出來的子源（客戶端才知道的失敗，見 resolveWhyMusicUrl 註解）
+      const exclude = (url.searchParams.get('exclude') || '')
+        .split(',').map(s => s.trim()).filter(Boolean)
       if (!songId && !title) {
         jsonResponse(res, { error: 'Missing id or title parameter' }, 400)
         return
       }
       try {
-        const resolved = await resolveWhyMusicUrl({ id: songId, source, bitrate, title, artist })
+        const resolved = await resolveWhyMusicUrl({ id: songId, source, bitrate, title, artist, exclude })
         if (!resolved) {
           jsonResponse(res, { error: 'No playable GD Music source found' }, 404)
           return

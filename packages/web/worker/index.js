@@ -17,9 +17,6 @@ import {
   getWhyMusicLyric,
   getWhyMusicPic,
   recommendWhyMusic,
-  audiomackContainerToWhyItem,
-  searchAudiomack,
-  getAudiomackAlbumOrSheet,
   jsonResponse,
   GD_BITRATE,
 } from './why.js'
@@ -66,10 +63,12 @@ async function handleApi(pathname, request, url) {
       const page = parseInt(url.searchParams.get('page') || '1', 10)
       const count = parseInt(url.searchParams.get('count') || '20', 10)
       if (!keyword) return jsonResponse({ error: 'Missing q parameter' }, 400)
-      const results = type === 'music'
-        ? await searchWhyMusic(keyword, page, count)
-        : (await searchAudiomack(keyword, type, page)).map(audiomackContainerToWhyItem)
-      return jsonResponse({ data: results })
+      // 只支援歌曲。專輯／歌單／歌手原本只有 audiomack 提供，該子源已移除，
+      // 留著這條路只會回播不出來的內容。
+      if (type !== 'music') {
+        return jsonResponse({ error: `不支援的搜尋類型：${type}`, data: [] }, 400)
+      }
+      return jsonResponse({ data: await searchWhyMusic(keyword, page, count) })
     }
 
     case '/api/why-url': {
@@ -84,6 +83,9 @@ async function handleApi(pathname, request, url) {
         bitrate: parseInt(url.searchParams.get('br') || String(GD_BITRATE), 10),
         title,
         artist: url.searchParams.get('artist') || '',
+        // 前端已知播不出來的子源（客戶端才知道的失敗，見 resolveWhyMusicUrl 註解）
+        exclude: (url.searchParams.get('exclude') || '')
+          .split(',').map(s => s.trim()).filter(Boolean),
       })
       if (!resolved) return jsonResponse({ error: 'No media URL returned' }, 404)
       return jsonResponse(resolved)
@@ -112,18 +114,6 @@ async function handleApi(pathname, request, url) {
       return jsonResponse({ mode, data: await recommendWhyMusic(mode, limit) })
     }
 
-    case '/api/album': {
-      const id = url.searchParams.get('id')
-      const slug = url.searchParams.get('slug')
-      const artist = url.searchParams.get('artist')
-      if (!id || !slug || !artist) {
-        return jsonResponse({ error: 'Missing id, slug, or artist parameter' }, 400)
-      }
-      const tracks = await getAudiomackAlbumOrSheet(id, slug, artist)
-      return jsonResponse(Array.isArray(tracks)
-        ? tracks.map(t => ({ ...t, platform: 'WhyMusic', subSource: 'audiomack' }))
-        : tracks)
-    }
 
     case '/api/proxy':
       return await handleProxy(request, url)

@@ -237,13 +237,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     搜尋
                   </button>
                 </div>
-                <div className="mt-3">
-                  <Segmented
-                    value={searchType as 'music' | 'album'}
-                    onChange={t => setSearchType(t)}
-                    options={[{ value: 'music', label: '歌曲' }, { value: 'album', label: '專輯' }]}
-                  />
-                </div>
+
               </div>
               {loading && <EmptyState text="搜尋中…" />}
               {!loading && results.length === 0 && (

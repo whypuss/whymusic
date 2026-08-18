@@ -31,8 +31,14 @@ export interface MusicItem {
   musicList?: MusicItem[]
   /** 後端返回的音頻時長 */
   duration?: number
-  /** GD 聚合音源的子音源（netease / joox…），取音源時需原樣帶回 */
+  /** 聚合音源的子音源（netease / joox…），取音源時需原樣帶回 */
   subSource?: string
+  /**
+   * 已知播不出來的子音源。播放器實際播失敗時填入，音源解析時會跳過它們。
+   * 伺服器端只看得到「解析失敗」，URL 解析成功但客戶端播不出來
+   * （CDN 對該地區回 403、容器格式不支援…）只有前端知道。
+   */
+  _exclude?: string[]
   /** GD 聚合音源的封面 ID（供 /api/why-pic 解析） */
   picId?: string
   /** GD 聚合音源的歌詞 ID（供 /api/why-lyric 解析） */

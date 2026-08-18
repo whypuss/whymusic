@@ -16,10 +16,9 @@
 | 設定方式 | 改 `packages/web/worker/why.js` 常數 | 同 A | 環境變數 |
 | 上游快取 | 只在單一 isolate 內 | 同 A | 全站共用 |
 
-三種方式功能相同 —— CF 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了，
-Audiomack 的 OAuth 簽名改用 Web Crypto（Workers 沒有 `node:crypto`）。
+三種方式功能相同 —— CF 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了。
 
-> **不需要任何金鑰或環境變數。** 音源走公開 API，Audiomack 用的是公開示例金鑰。
+> **不需要任何金鑰或環境變數。** 兩個子音源（netease / joox）都走公開 API。
 
 **所有方式部署完成後，都要先到「音源」頁安裝音源** —— app 出廠不帶音源，
 不裝就搜不到也播不了。網址是 `/plugins/whymusic.js`，該頁點一下會自動填入。
@@ -147,16 +146,17 @@ sudo chmod 600 /etc/whymusic.env
 |------|------|------|
 | `PORT` | `8788` | 監聽埠 |
 | `PLUGINS_DIR` | repo 的 `plugins/` | 音源插件目錄 |
-| `WHY_MUSIC_SOURCES` | `netease,joox,audiomack` | 啟用的子音源 |
+| `WHY_MUSIC_SOURCES` | `netease,joox` | 啟用的子音源 |
 | `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子源適用） |
 | `GD_API_URL` | `https://music-api.gdstudio.xyz/api.php` | GD 上游位址 |
 | `AUDIOMACK_SEARCH_CONSUMER_KEY` / `_SECRET` | `audiomack-js` / 公開值 | Audiomack 搜尋 |
 | `AUDIOMACK_MEDIA_CONSUMER_KEY` / `_SECRET` | 同上 | Audiomack 音源 |
 
-⚠️ **Audiomack 的 key 與 secret 必須成對。** 曾經踩過：`AUDIOMACK_MEDIA_CONSUMER_KEY`
-被設成 `audiomack-web` 但 secret 仍是 `audiomack-js` 的，簽名一律失敗並回
-`1003 Invalid signature` —— 而搜尋照常運作，只有播放壞掉，很難聯想到是設定問題。
-不確定就整組不要設，用預設值。
+⚠️ **Audiomack 已不是子音源**（播放不穩且疑似地域限制，見 README），那組
+`AUDIOMACK_*` 只影響 `server.mjs` 仍保留的舊端點。若要設，key 與 secret 必須成對 ——
+曾經踩過 `AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-web` 配 `audiomack-js` 的 secret，
+簽名一律失敗回 `1003 Invalid signature`，而搜尋照常運作、只有播放壞掉，很難聯想到
+是設定問題。不確定就整組不要設。
 
 完整範例見 [.env.example](.env.example)。
 
@@ -274,8 +274,9 @@ A: 硬重載一次。API 回應已帶 `Cache-Control: no-store`，前端資源�
 理論上不會卡快取；但瀏覽器可能還留著舊的 index.html。
 
 **Q: 播放某些歌會失敗？**
-A: 正常。部分曲目在所有子音源都取不到音源（常見於 Audiomack 的授權曲目）。
-自動續播會跳過它繼續；你自己點的那首失敗時會彈窗告知。
+A: 部分曲目在兩個子音源都取不到可播的音源。若某個子源給了 URL 但實際播不出來，
+會自動換另一個子源重試同一首歌；兩個都不行才放棄。自動續播會跳過它繼續，
+你自己點的那首失敗時會彈窗告知。
 
 **Q: 音頻播到一半斷？**
 A: 自建版檢查 nginx 有沒有 `proxy_buffering off;`。

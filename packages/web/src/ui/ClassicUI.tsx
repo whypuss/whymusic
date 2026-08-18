@@ -190,7 +190,6 @@ export default function ClassicUI({ app, onSwitchUi }: { app: MusicApp; onSwitch
                       className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white outline-none"
                     >
                       <option value="music">歌曲</option>
-                      <option value="album">專輯</option>
                     </select>
                     <button
                       onClick={() => { setSearchPage(1); search(1) }}
