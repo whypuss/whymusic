@@ -9,8 +9,8 @@
     "dev": "pnpm --filter @musicfree/web dev",
     "build": "pnpm --filter @musicfree/web build",
     "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck",
-    "build:cf": "pnpm build && node scripts/build-worker.mjs && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/",
-    "build:zip": "pnpm build && node scripts/build-cf-zip.mjs",
+    "build:cf": "node scripts/build-cf.mjs",
+    "build:zip": "node scripts/build-cf.mjs && node scripts/build-cf-zip.mjs",
     "deploy:cf": "pnpm build:cf && cd packages/web && wrangler pages deploy dist --project-name=whymusicweb --branch=main --commit-dirty=true"
   },
   "dependencies": {
