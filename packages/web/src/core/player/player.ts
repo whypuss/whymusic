@@ -138,6 +138,19 @@ export class Player {
     this.audio.currentTime = t
   }
 
+  /**
+   * 單曲循環。用 audio 原生 loop 而不是在 ended 事件裡重播，
+   * 因為重播要重新解析音源 URL，會有可聽出來的空隙。
+   * 注意：loop 為 true 時瀏覽器不會發 ended 事件。
+   */
+  setLoop(loop: boolean): void {
+    this.audio.loop = loop
+  }
+
+  get loop(): boolean {
+    return this.audio.loop
+  }
+
   /** 訂閱事件 */
   on(event: string, cb: (...args: any[]) => void): () => void {
     this.listeners.set(event, [...(this.listeners.get(event) || []), cb])

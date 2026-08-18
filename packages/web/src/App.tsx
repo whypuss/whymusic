@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
 
 const player = new Player()
@@ -22,6 +22,16 @@ const OFFICIAL_PLUGIN_URL = '/plugins/whymusic.js'
 
 const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
+const STORAGE_PLAY_MODE = 'musicfree-play-mode'
+
+type PlayMode = 'auto' | 'one' | 'off'
+const PLAY_MODE_ORDER: PlayMode[] = ['auto', 'one', 'off']
+const PLAY_MODE_ICON: Record<PlayMode, string> = { auto: '🔁', one: '🔂', off: '➡️' }
+const PLAY_MODE_LABEL: Record<PlayMode, string> = {
+  auto: '自動續播（專輯依序／其他隨機）',
+  one: '單曲循環',
+  off: '播完即停',
+}
 
 let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
@@ -158,6 +168,26 @@ export default function App() {
   const [albumTracks, setAlbumTracks] = useState<MusicItem[]>([])
   const [albumLoading, setAlbumLoading] = useState(false)
 
+  /**
+   * 播放模式：
+   *   auto — 播完自動續播（專輯內依序、其他清單隨機挑一首）
+   *   one  — 單曲循環
+   *   off  — 播完即停
+   */
+  const [playMode, setPlayMode] = useState<PlayMode>(() => {
+    const saved = localStorage.getItem(STORAGE_PLAY_MODE)
+    return PLAY_MODE_ORDER.includes(saved as PlayMode) ? (saved as PlayMode) : 'auto'
+  })
+  /**
+   * 目前的播放佇列：這首歌是從哪個清單點進來的、在第幾位。
+   * 用 ref 而非 state：ended 事件的處理函式只註冊一次，讀 state 會拿到舊值。
+   * 不靠 item._albumDetail.musicList —— 專輯曲目是經 getAlbumInfo 另外載入的，
+   * albumDetail 上的 musicList 可能是空的。
+   */
+  const queueRef = useRef<{ list: MusicItem[]; index: number; isAlbum: boolean }>({
+    list: [], index: -1, isAlbum: false,
+  })
+
   // 依賴 pluginKey 來觸發重渲染
   /** 內置音源是否已安裝。依 pluginKey 重算（安裝／移除／啟用都會遞增它） */
   const officialInstalled = useMemo(
@@ -188,6 +218,37 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView])
 
+  // ended 的處理放在 ref 裡：事件只註冊一次，直接寫閉包會鎖住第一次渲染的
+  // playMode 與佇列。每次渲染更新 ref，事件就能讀到最新值。
+  const handleEndedRef = useRef<() => void>(() => {})
+  handleEndedRef.current = () => {
+    setIsPlaying(false)
+    setCurrentTime(0)
+    // one 由 audio 原生 loop 處理，根本不會發 ended；off 就是播完即停
+    if (playMode !== 'auto') return
+
+    const { list, index, isAlbum } = queueRef.current
+    if (list.length === 0) return
+
+    if (isAlbum) {
+      // 專輯內依序播下一首；最後一首播完就停，不繞回開頭
+      const nextIdx = index + 1
+      if (nextIdx >= list.length) return
+      const next = list[nextIdx]
+      play(next, { list, index: nextIdx, isAlbum: true })
+      return
+    }
+
+    // 非專輯：從同一個清單隨機挑，排除剛播完的那首（清單只有一首就停）
+    if (list.length === 1) return
+    let nextIdx = index
+    for (let i = 0; i < 8 && nextIdx === index; i++) {
+      nextIdx = Math.floor(Math.random() * list.length)
+    }
+    if (nextIdx === index) nextIdx = (index + 1) % list.length
+    play(list[nextIdx], { list, index: nextIdx, isAlbum: false })
+  }
+
   useEffect(() => {
     const unsubPlay = player.on('play', () => setIsPlaying(true))
     const unsubPause = player.on('pause', () => setIsPlaying(false))
@@ -195,10 +256,7 @@ export default function App() {
       setCurrentTime(t)
       setDuration(d)
     })
-    const unsubEnd = player.on('ended', () => {
-      setIsPlaying(false)
-      setCurrentTime(0)
-    })
+    const unsubEnd = player.on('ended', () => handleEndedRef.current())
     return () => {
       unsubPlay()
       unsubPause()
@@ -206,6 +264,20 @@ export default function App() {
       unsubEnd()
     }
   }, [])
+
+  // 單曲循環交給 audio 原生 loop；模式記在 localStorage，重開仍保留
+  useEffect(() => {
+    player.setLoop(playMode === 'one')
+    localStorage.setItem(STORAGE_PLAY_MODE, playMode)
+  }, [playMode])
+
+  const cyclePlayMode = () => {
+    setPlayMode(prev => {
+      const next = PLAY_MODE_ORDER[(PLAY_MODE_ORDER.indexOf(prev) + 1) % PLAY_MODE_ORDER.length]
+      showNotification(PLAY_MODE_LABEL[next], 'info')
+      return next
+    })
+  }
 
   const search = useCallback(async (pageNum: number = 1, append = false) => {
     if (!keyword.trim()) return
@@ -342,7 +414,11 @@ export default function App() {
    * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
    * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
    */
-  const play = async (item: MusicItem) => {
+  const play = async (
+    item: MusicItem,
+    queue?: { list: MusicItem[]; index: number; isAlbum: boolean },
+  ) => {
+    if (queue) queueRef.current = queue
     setPlayingItem(item)
     try {
       const platform = item.platform || ''
@@ -461,8 +537,10 @@ export default function App() {
         loadAlbumTracks(item)
       }
     } else {
-      // 歌曲：直接播放
-      play(item)
+      // 歌曲：連同它所在的清單一起傳入，播完才知道要接什麼
+      const list = currentView === 'recommend' ? recommendSongs : results
+      const index = list.findIndex(s => s.id === item.id && s.platform === item.platform)
+      play(item, { list, index: index >= 0 ? index : 0, isAlbum: false })
     }
   }
 
@@ -698,9 +776,9 @@ export default function App() {
                         key={track.id}
                         className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-700 transition"
                         onClick={() => {
-                          // Attach album context to track for auto-skip
+                          // 帶上專輯脈絡：某首無源時可跳下一首，播完也依序接續
                           const trackWithCtx = { ...track, _albumDetail: albumDetail, _trackIndex: idx }
-                          play(trackWithCtx)
+                          play(trackWithCtx, { list: albumTracks, index: idx, isAlbum: true })
                         }}
                       >
                         <div className="w-10 h-10 rounded bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center flex-shrink-0">
@@ -1062,6 +1140,21 @@ export default function App() {
               {isPlaying ? '⏸' : '▶'}
             </button>
             <span className="text-sm text-gray-400 w-10">{formatTime(duration)}</span>
+            <button
+              onClick={cyclePlayMode}
+              title={PLAY_MODE_LABEL[playMode]}
+              aria-label={PLAY_MODE_LABEL[playMode]}
+              className={`px-2 py-1 rounded text-base leading-none ${
+                playMode === 'off'
+                  ? 'bg-gray-700 hover:bg-gray-600 text-gray-400'
+                  : 'bg-blue-600/80 hover:bg-blue-600'
+              }`}
+            >
+              {PLAY_MODE_ICON[playMode]}
+            </button>
+          </div>
+          <div className="text-center text-xs text-gray-500 mt-1">
+            {PLAY_MODE_LABEL[playMode]}
           </div>
         </div>
       </div>

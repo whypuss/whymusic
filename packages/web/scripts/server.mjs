@@ -455,11 +455,35 @@ const WHY_SOURCES = (process.env.WHY_MUSIC_SOURCES || 'netease,joox,audiomack')
 const GD_SOURCES = WHY_SOURCES.filter(s => s !== AUDIOMACK_SOURCE)
 const GD_BITRATE = parseInt(process.env.WHY_MUSIC_BITRATE || '320', 10)
 
-// 推薦頁資料來源：網易雲榜單。playlist 回應自帶封面與時長，
-// 不必逐首打 types=pic，省上游請求。前者不足 limit 時用後者補齊。
+// 推薦頁資料來源：香港叱咤903專業推介（商業電台的粵語流行榜，每週更新）。
+// playlist 回應自帶封面、時長、發行日與熱度，不必逐首打 types=pic。
+//
+// 為什麼是這個榜（2026-08-18 實測）：
+//   - 原本的「香港電台中文歌曲龍虎榜」(10169002) 最後更新是 2020-01-10、只有
+//     13 首，「最新」推薦的其實是六年前的歌。
+//   - 網易雲的新歌榜/熱歌榜/飆升榜雖然天天更新，但清一色國語內地歌，不是港樂。
+//   - 叱咤903 這份更新到 2026-08-17，1000+ 首且全是粵語港樂（周國賢、陳蕾、
+//     Gareth.T、MC 張天賦、Zpecial…），本身已按發行時間降序排列。
 const GD_TOPLISTS = {
-  new: ['10169002', '3779629'],  // 香港電台中文歌曲龍虎榜 → 雲音樂新歌榜
-  hot: ['3778678', '19723756'],  // 雲音樂熱歌榜 → 雲音樂飆升榜
+  // 兩個 id 都是叱咤903，前者是每週更新的主榜，後者是年度榜（備援，
+  // 主榜若被刪除或改私密仍有東西可回）
+  new: ['5097494848', '13483749530'],
+  hot: ['5097494848', '13483749530'],
+}
+
+/**
+ * 推薦排序：
+ *   new — 沿用榜單原順序（叱咤榜本身最新在前）
+ *   hot — 按 netease 的 pop 熱度（0–100）降序；同熱度以發行時間新者優先，
+ *         否則前段會擠滿一堆 pop=100 的曲目而順序無意義
+ */
+function sortTracksByMode(tracks, mode) {
+  if (mode !== 'hot') return tracks
+  return [...tracks].sort((a, b) => {
+    const popDiff = (b.pop ?? 0) - (a.pop ?? 0)
+    if (popDiff !== 0) return popDiff
+    return (b.publishTime ?? 0) - (a.publishTime ?? 0)
+  })
 }
 
 // 上游按 IP 限流，而本服務所有使用者共用同一出口 IP，故一律走 TTL 快取。
@@ -715,7 +739,7 @@ async function getWhyMusicPic(picId, source, size = 500) {
   return data?.url || ''
 }
 
-/** 推薦頁：網易雲榜單（回應自帶封面，無需逐首取圖） */
+/** 推薦頁：香港叱咤903榜單（回應自帶封面，無需逐首取圖） */
 async function recommendWhyMusic(mode = 'hot', limit = 40) {
   const listIds = GD_TOPLISTS[mode] || GD_TOPLISTS.hot
   const seen = new Set()
@@ -725,7 +749,7 @@ async function recommendWhyMusic(mode = 'hot', limit = 40) {
     let tracks = []
     try {
       const data = await gdRequest('playlist', { source: 'netease', id: listId })
-      tracks = data?.playlist?.tracks || []
+      tracks = sortTracksByMode(data?.playlist?.tracks || [], mode)
     } catch (err) {
       console.error(`[gd] playlist ${listId} failed: ${err.message}`)
       continue
