@@ -184,6 +184,35 @@ const waitForPlugins = async (): Promise<boolean> => {
 initPlugins()
 
 /**
+ * 把曲目資訊交給系統的媒體工作階段（鎖定畫面／通知欄顯示的東西）。
+ *
+ * 抽成模組層函式而不是只放在 effect 裡，是因為**呼叫時機很重要**：Chrome 在
+ * 取得 Android audio focus 的那一刻讀當下的 metadata，而 React 的 effect 要等
+ * commit 之後才跑 —— 也就是 player.play() 已經開始播了才設，Android 那邊可能
+ * 已經拿當時還是 null 的 metadata 建好通知了。所以 play() 裡會在真正播放前先
+ * 呼叫一次，effect 再負責之後的同步。重複設定是無害的。
+ */
+function applyMediaMetadata(item: MusicItem | null): void {
+  const ms = typeof navigator !== 'undefined' ? navigator.mediaSession : undefined
+  if (!ms) return
+  if (!item) {
+    ms.metadata = null
+    ms.playbackState = 'none'
+    return
+  }
+  ms.metadata = new MediaMetadata({
+    title: item.title || '未知曲目',
+    artist: item.artist || '未知歌手',
+    album: item.album || 'WhyMusic',
+    // Chrome for Android 媒體通知的目標尺寸是 512x512。搜尋結果只帶 picId、
+    // 沒有 artwork（封面要另外解析），那時明確給站台圖示，別留空讓系統自己猜
+    artwork: item.artwork
+      ? [{ src: item.artwork, sizes: '512x512', type: 'image/jpeg' }]
+      : [{ src: '/favicon-512.png', sizes: '512x512', type: 'image/png' }],
+  })
+}
+
+/**
  * 整個 app 的狀態與行為。抽成 hook 是為了讓多套 UI 共用同一份邏輯 ——
  * 換皮不必動任何音源、播放或插件的程式碼。
  */
@@ -343,22 +372,7 @@ export function useMusicApp() {
    * metadata 與 positionState 分開更新：前者只在換歌時，後者要跟著進度走。
    */
   useEffect(() => {
-    const ms = navigator.mediaSession
-    if (!ms) return
-    if (!playingItem) {
-      ms.metadata = null
-      ms.playbackState = 'none'
-      return
-    }
-    ms.metadata = new MediaMetadata({
-      title: playingItem.title || '未知曲目',
-      artist: playingItem.artist || '未知歌手',
-      album: playingItem.album || 'WhyMusic',
-      // 有封面時鎖定畫面才會顯示大圖。沒有就留空，系統會用預設樣式
-      artwork: playingItem.artwork
-        ? [{ src: playingItem.artwork, sizes: '512x512', type: 'image/jpeg' }]
-        : [],
-    })
+    applyMediaMetadata(playingItem)
   }, [playingItem])
 
   useEffect(() => {
@@ -639,6 +653,9 @@ export function useMusicApp() {
       if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
       usedSource = media.source || item.subSource
 
+      // 播放前就把 metadata 設好 —— Android 是在取得 audio focus 的那一刻讀它，
+      // 等 React effect 跑就太晚了（詳見 applyMediaMetadata）
+      applyMediaMetadata(item)
       await player.play(media.url)
       setIsPlaying(true)
       // 開始播了才預取下一首 —— 播放本身優先，預取只是背景準備

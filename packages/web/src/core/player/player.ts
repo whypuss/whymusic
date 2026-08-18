@@ -18,6 +18,7 @@ export class Player {
     ;(this.audio as any).playsInline = true
     // 讓瀏覽器盡量預先緩衝。手機切到背景後 JS 會被凍結，緩衝越多越不容易斷
     this.audio.preload = 'auto'
+    this.attachToDocument()
     this.listeners = new Map()
 
     // 自動通知外部
@@ -27,6 +28,30 @@ export class Player {
     this.audio.addEventListener('timeupdate', () => this.emit('timeupdate', this.audio.currentTime, this.audio.duration))
     this.audio.addEventListener('error', (e) => this.emit('error', e))
     this.audio.addEventListener('canplay', () => this.emit('canplay', this.audio.duration))
+  }
+
+  /**
+   * 把 audio 元素掛進文件裡（隱藏）。
+   *
+   * `new Audio()` 產生的元素從未進入 DOM 也「允許」繼續播放，但 Chrome 官方文件
+   * 把掛進文件列為最可靠的配置 —— Android 的媒體通知需要 Android audio focus，
+   * 而 detached 元素在這條路上是未定義行為。iOS Safari 對此寬鬆，所以會出現
+   * 「iOS 有鎖屏播放介面、Android 沒有」這種只在單邊出現的症狀。
+   *
+   * 掛上去之後絕對不能再移除：規格規定元素一旦被移出文件，UA 必須暫停它。
+   */
+  private attachToDocument(): void {
+    if (typeof document === 'undefined') return
+    this.audio.style.display = 'none'
+    const mount = () => {
+      if (!this.audio.isConnected) document.body.appendChild(this.audio)
+    }
+    if (document.body) {
+      mount()
+    } else {
+      // Player 可能在模組載入時就 new 出來，那時 body 還不存在
+      document.addEventListener('DOMContentLoaded', mount, { once: true })
+    }
   }
 
   /** 清理 HLS 實例 */
