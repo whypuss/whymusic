@@ -20,6 +20,13 @@ export const pluginManager = new PluginManager()
 export const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
 export const OFFICIAL_PLUGIN_URL = '/plugins/whymusic.js'
 
+/**
+ * 前端的建置戳記（vite define 注入）。顯示在「音源」頁，用來判斷線上跑的是哪一版 ——
+ * 換版後看到的是舊行為時，先看這個就知道是「沒部署成功」還是「快取沒更新」。
+ */
+export const APP_VERSION =
+  typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+
 const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
 const STORAGE_PLAY_MODE = 'musicfree-play-mode'
@@ -200,6 +207,8 @@ export function useMusicApp() {
   // 安裝／重新載入音源失敗的原因（預設不自動安裝，所以這只在使用者主動操作後才有值）
   const [pluginError, setPluginError] = useState<string | null>(null)
   const [reloadingPlugin, setReloadingPlugin] = useState(false)
+  /** 後端（worker）回報的建置戳記。與 APP_VERSION 不一致就代表只部署了一半 */
+  const [serverVersion, setServerVersion] = useState<string | null>(null)
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
@@ -265,6 +274,14 @@ export function useMusicApp() {
 
     }
     initializeState()
+  }, [])
+
+  // 取後端的建置戳記。失敗就留 null，UI 顯示「無法取得」而不是假裝一致
+  useEffect(() => {
+    fetch('/api/version', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setServerVersion(d?.worker || 'unknown'))
+      .catch(() => setServerVersion(null))
   }, [])
 
   // 進入推薦頁時自動載入
@@ -991,6 +1008,7 @@ export function useMusicApp() {
     search,
     searchPage,
     searchType,
+    serverVersion,
     setAlbumDetail,
     setAlbumLoading,
     setAlbumTracks,

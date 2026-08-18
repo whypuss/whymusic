@@ -115,6 +115,13 @@ async function handleApi(pathname, request, url) {
     }
 
 
+    case '/api/version':
+      // 建置時由 esbuild 注入。前端顯示這個值與它自己的戳記做比對，
+      // 不一致就代表只部署了一半（例如前端更新了但 worker 沒有）
+      return jsonResponse({
+        worker: typeof __WORKER_VERSION__ !== 'undefined' ? __WORKER_VERSION__ : 'unknown',
+      })
+
     case '/api/proxy':
       return await handleProxy(request, url)
 

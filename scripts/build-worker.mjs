@@ -12,6 +12,7 @@
 import { build } from 'esbuild'
 import path from 'node:path'
 import fs from 'node:fs'
+import { buildStamp } from './build-stamp.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const ENTRY = path.join(ROOT, 'packages/web/worker/index.js')
@@ -32,6 +33,9 @@ await build({
   // 不 minify：這支 worker 會被別人拿去部署，保留可讀性讓人能檢查它做了什麼
   minify: false,
   legalComments: 'none',
+  // 建置戳記編進 worker，供 /api/version 回報。前端也有自己的一份 ——
+  // 兩者不一致就表示只部署了一半
+  define: { __WORKER_VERSION__: JSON.stringify(buildStamp()) },
 })
 
 const kb = (fs.statSync(OUT).size / 1024).toFixed(1)

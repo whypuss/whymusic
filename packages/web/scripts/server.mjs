@@ -9,6 +9,25 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createHmac } from 'node:crypto'
+import { execSync } from 'node:child_process'
+
+/**
+ * 建置戳記，供 /api/version 回報，前端顯示在「音源」頁。
+ * 自托管版不經打包，所以啟動時直接問 git；不在 git 工作區就回 dev。
+ * 格式與 CF 版（scripts/build-stamp.mjs）一致。
+ */
+const SERVER_VERSION = (() => {
+  const run = (cmd) => {
+    try {
+      return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    } catch { return '' }
+  }
+  const sha = run('git rev-parse --short HEAD') || 'dev'
+  const dirty = run('git status --porcelain') ? '+' : ''
+  const t = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${sha}${dirty} · ${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`
+})()
 
 const PORT = Number(process.env.PORT) || 8788
 const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
@@ -1244,6 +1263,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ── API: /api/proxy ──────────────────────────────────
+    // 建置戳記。自托管版不經 esbuild，故在啟動時從 git 取（取不到就回 dev）
+    if (pathname === '/api/version') {
+      jsonResponse(res, { worker: SERVER_VERSION })
+      return
+    }
+
     if (pathname === '/api/proxy') {
       const targetUrl = url.searchParams.get('url')
       const method = url.searchParams.get('method') || req.method

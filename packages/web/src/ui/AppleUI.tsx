@@ -11,6 +11,7 @@ import { MusicItem } from './../core'
 import {
   MusicApp,
   pluginManager,
+  APP_VERSION,
   OFFICIAL_PLUGIN_URL,
   PLAY_MODE_ICON,
   PLAY_MODE_LABEL,
@@ -99,7 +100,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
     recommendSongs, recommendUnsupported, removePlugin, results, search,
-    searchType, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
+    searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setSearchPage, setSearchType, switchRecommendMode, togglePlay, togglePlugin,
   } = app
 
@@ -400,6 +401,35 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   ))}
                   {installedPlugins.length === 0 && (
                     <div className="px-4 py-6 text-center text-[14px] text-white/30">尚無音源</div>
+                  )}
+                </div>
+              </div>
+
+              {/*
+                版本資訊。前端與後端各報一個建置戳記 —— 換版後看到舊行為時，
+                先看這裡就知道是「沒部署成功」還是「瀏覽器快取沒更新」。
+                兩者不一致代表只部署了一半（例如前端上去了但 worker 沒有）。
+              */}
+              <div className="mt-6">
+                <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                  版本
+                </div>
+                <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
+                  <div className="px-4 py-3 flex items-center justify-between gap-3">
+                    <span className="text-[14px] text-white/70">前端</span>
+                    <span className="text-[13px] tabular-nums text-white/45">{APP_VERSION}</span>
+                  </div>
+                  <div className="px-4 py-3 flex items-center justify-between gap-3">
+                    <span className="text-[14px] text-white/70">後端</span>
+                    <span className="text-[13px] tabular-nums text-white/45">
+                      {serverVersion === null ? '無法取得' : serverVersion}
+                    </span>
+                  </div>
+                  {serverVersion && serverVersion !== APP_VERSION && (
+                    <div className="px-4 py-3 text-[12px] text-[#FFD60A] leading-relaxed">
+                      前後端戳記不一致 —— 可能只部署了一半，或瀏覽器還留著舊的前端。
+                      硬重載一次；若仍不同，重新部署。
+                    </div>
                   )}
                 </div>
               </div>

@@ -13,6 +13,7 @@ import { build } from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { buildStamp } from './build-stamp.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const WEB = path.join(ROOT, 'packages/web')
@@ -41,6 +42,7 @@ await build({
   // Workers 不需要 minify 也在限制內，保留可讀性方便別人檢查這支 worker 做了什麼
   minify: false,
   legalComments: 'none',
+  define: { __WORKER_VERSION__: JSON.stringify(buildStamp()) },
 })
 console.log('✓ 已打包 _worker.js')
 
