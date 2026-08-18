@@ -136,7 +136,15 @@ async function getAudiomackAlbumOrSheet(id, slug, artist) {
 export function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      // 不帶 Cache-Control 的話 Cloudflare 邊緣會自行快取這些 GET 回應，
+      // 換版之後同一個 query 可能拿到舊部署的內容（實測踩過：某個 /api/ 路徑
+      // 回了 worker 存在之前的 index.html）。上游回應的快取由後端自己的
+      // TTL cache 負責，邊緣不該再插手。
+      'Cache-Control': 'no-store',
+    },
   })
 }
 

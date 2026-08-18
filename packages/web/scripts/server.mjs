@@ -805,7 +805,13 @@ function corsHeaders() {
 }
 
 function jsonResponse(res, data, status = 200) {
-  res.writeHead(status, { ...corsHeaders(), 'Content-Type': 'application/json' })
+  res.writeHead(status, {
+    ...corsHeaders(),
+    'Content-Type': 'application/json',
+    // 與 CF 版一致：不讓中間層（nginx / CDN）快取 API 回應。上游回應的快取
+    // 由本服務自己的 TTL cache 負責，外層再快取只會造成換版後拿到舊內容。
+    'Cache-Control': 'no-store',
+  })
   res.end(JSON.stringify(data))
 }
 
