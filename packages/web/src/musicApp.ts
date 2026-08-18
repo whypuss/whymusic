@@ -44,6 +44,11 @@ export type PlayQueue = { list: MusicItem[]; index: number; order: PlayOrder }
 
 /** 自動續播時連續失敗的上限。超過就停手，不要無止境地打上游 */
 const MAX_AUTO_SKIP = 8
+
+/** 曲目的唯一鍵。同一首歌在不同子音源 id 不同，故連同 platform 一起 */
+function queueKey(item: MusicItem): string {
+  return `${item.platform || ''}::${item.id}`
+}
 /** 同一首歌最多換幾次子音源。子源只有兩三個，超過就是真的沒有可播的來源 */
 const MAX_SOURCE_RETRY = 2
 
@@ -226,6 +231,19 @@ export function useMusicApp() {
    * albumDetail 上的 musicList 可能是空的。
    */
   const queueRef = useRef<PlayQueue>({ list: [], index: -1, order: 'sequential' })
+  /**
+   * 預取好的下一首播放位址。換歌時若命中就省掉一次網路解析 ——
+   * 手機在背景時網路請求最容易失敗，少一步就少一個中斷點。
+   */
+  const prefetchRef = useRef<{ key: string; url: string; source?: string } | null>(null)
+  /**
+   * 實際播放過的曲目堆疊（不含當前這首）。
+   * 「上一首」不能用 index-1 —— 隨機模式下清單索引與播放順序無關，
+   * 那樣按上一首會跳到另一首沒聽過的歌。要回到真正剛聽過的那首得靠歷史。
+   */
+  const historyRef = useRef<{ item: MusicItem; index: number }[]>([])
+  /** 當前曲目的 ref。play() 要讀「上一首是誰」來推歷史，讀 state 會拿到舊值 */
+  const playingItemRef = useRef<MusicItem | null>(null)
 
   // 依賴 pluginKey 來觸發重渲染
   /** 內置音源是否已安裝。依 pluginKey 重算（安裝／移除／啟用都會遞增它） */
@@ -294,6 +312,89 @@ export function useMusicApp() {
     player.setLoop(playMode === 'one')
     localStorage.setItem(STORAGE_PLAY_MODE, playMode)
   }, [playMode])
+
+  /**
+   * MediaSession：告訴作業系統「這是一個音樂播放器」。
+   *
+   * 這是手機背景播放能不能撐住的關鍵。手機瀏覽器會凍結背景頁面的 JS，而我們
+   * 「切下一首」需要 JS 跑起來（挑下一首 → 解析音源 → 設 audio.src）。註冊
+   * MediaSession 之後：
+   *   - 系統把這個頁面當成活躍的媒體工作階段，較不會被回收
+   *   - 鎖定畫面／通知欄／耳機按鈕能直接控制，不必回到瀏覽器
+   *   - 上一首／下一首由系統轉發，不依賴頁面自己的計時器
+   *
+   * metadata 與 positionState 分開更新：前者只在換歌時，後者要跟著進度走。
+   */
+  useEffect(() => {
+    const ms = navigator.mediaSession
+    if (!ms) return
+    if (!playingItem) {
+      ms.metadata = null
+      ms.playbackState = 'none'
+      return
+    }
+    ms.metadata = new MediaMetadata({
+      title: playingItem.title || '未知曲目',
+      artist: playingItem.artist || '未知歌手',
+      album: playingItem.album || 'WhyMusic',
+      // 有封面時鎖定畫面才會顯示大圖。沒有就留空，系統會用預設樣式
+      artwork: playingItem.artwork
+        ? [{ src: playingItem.artwork, sizes: '512x512', type: 'image/jpeg' }]
+        : [],
+    })
+  }, [playingItem])
+
+  useEffect(() => {
+    const ms = navigator.mediaSession
+    if (!ms) return
+    ms.playbackState = isPlaying ? 'playing' : 'paused'
+  }, [isPlaying])
+
+  // 鎖定畫面的進度條。duration 尚未就緒時不要設，否則會丟 TypeError
+  useEffect(() => {
+    const ms = navigator.mediaSession
+    if (!ms?.setPositionState) return
+    if (!Number.isFinite(duration) || duration <= 0) return
+    try {
+      ms.setPositionState({
+        duration,
+        position: Math.min(currentTime, duration),
+        playbackRate: 1,
+      })
+    } catch { /* 某些瀏覽器對數值範圍較嚴格，設不了就算了 */ }
+  }, [currentTime, duration])
+
+  // 系統控制項的處理函式。用 ref 讀最新的 handler，避免每次換歌都重新註冊
+  const mediaActionsRef = useRef({
+    play: () => {}, pause: () => {}, next: () => {}, prev: () => {}, seek: (_t: number) => {},
+  })
+  mediaActionsRef.current = {
+    play: () => { player.resume(); setIsPlaying(true) },
+    pause: () => { player.pause(); setIsPlaying(false) },
+    next: () => playNext(),
+    prev: () => playPrev(),
+    seek: (t: number) => { player.seekTo(t); setCurrentTime(t) },
+  }
+
+  useEffect(() => {
+    const ms = navigator.mediaSession
+    if (!ms?.setActionHandler) return
+    const a = mediaActionsRef.current
+    // 包一層 ref 轉發：註冊只做一次，但呼叫到的永遠是最新的閉包
+    ms.setActionHandler('play', () => mediaActionsRef.current.play())
+    ms.setActionHandler('pause', () => mediaActionsRef.current.pause())
+    ms.setActionHandler('nexttrack', () => mediaActionsRef.current.next())
+    ms.setActionHandler('previoustrack', () => mediaActionsRef.current.prev())
+    ms.setActionHandler('seekto', (d: any) => {
+      if (typeof d?.seekTime === 'number') mediaActionsRef.current.seek(d.seekTime)
+    })
+    void a
+    return () => {
+      for (const action of ['play', 'pause', 'nexttrack', 'previoustrack', 'seekto'] as const) {
+        try { ms.setActionHandler(action, null) } catch { /* 忽略不支援的動作 */ }
+      }
+    }
+  }, [])
 
   const cyclePlayMode = () => {
     setPlayMode(prev => {
@@ -434,10 +535,35 @@ export function useMusicApp() {
   }
 
   /**
-   * 播放。播放器只做一件事：問音源要一個可播的 URL，然後播。
-   * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
-   * 要不要簽名，全是插件（與其後端）的事，加新音源不必改這個函式。
+   * 預取下一首的播放位址。
+   *
+   * 為什麼需要：手機切到背景（或鎖屏）後瀏覽器會凍結頁面的 JS 與網路，而換歌
+   * 需要「挑下一首 → 解析音源 → 設 audio.src」。解析那步要打網路，正是背景中
+   * 最容易失敗的環節 —— 失敗就停在那裡，使用者看到的就是「播幾首就不動了」。
+   * 提前在前一首還在播時把位址拿好，換歌時就只剩設定 src 這個純本地動作。
    */
+  const prefetchNext = async () => {
+    if (playMode !== 'auto') return
+    const q = queueRef.current
+    const nextIdx = pickNextIndex(q, new Set())
+    if (nextIdx < 0) return
+    const next = q.list[nextIdx]
+    if (!next) return
+    const key = queueKey(next)
+    if (prefetchRef.current?.key === key) return
+    try {
+      const plugin = pluginManager.getPlugin(next.platform || '')
+      if (!plugin) return
+      const media = await pluginManager.getMediaSource(plugin, next)
+      if (media?.url) {
+        prefetchRef.current = { key, url: media.url, source: media.source }
+      }
+    } catch {
+      // 預取失敗不是問題，換歌時會正常走一次解析
+      prefetchRef.current = null
+    }
+  }
+
   /**
    * 播放。播放器只做一件事：問音源要一個可播的 URL，然後播。
    * 這裡刻意沒有任何平台名稱的判斷 —— 音源怎麼解析、要不要跨源救援、
@@ -446,17 +572,32 @@ export function useMusicApp() {
    * opts.auto     這次播放是自動續播觸發的（而非使用者點的）
    * opts.skip     本輪已知播不出來的索引，跨遞迴共用同一個 Set
    * opts.exclude  這首歌已知播不出來的子音源，換源重試時累積
+   *
+   * 另見 prefetchNext()：換歌時會盡量用預取好的位址，少一次網路往返。
    */
   const play = async (
     item: MusicItem,
     queue?: PlayQueue,
-    opts?: { auto?: boolean; skip?: Set<number>; exclude?: string[] },
+    opts?: { auto?: boolean; skip?: Set<number>; exclude?: string[]; skipHistory?: boolean },
   ) => {
+    const prevQueue = queueRef.current
+    const prevItem = playingItemRef.current
     if (queue) queueRef.current = queue
     const auto = opts?.auto ?? false
     const skip = opts?.skip ?? new Set<number>()
     const exclude = opts?.exclude ?? []
+    // 換到不同曲目時把前一首推進歷史。exclude 非空代表是同一首換子源重試，
+    // skipHistory 代表這次本身就是回退 —— 兩種都不該記錄。
+    if (
+      !opts?.skipHistory && exclude.length === 0 && prevItem
+      && queueKey(prevItem) !== queueKey(item)
+    ) {
+      historyRef.current.push({ item: prevItem, index: prevQueue.index })
+      // 只留最近 50 首，避免長時間播放後無上限成長
+      if (historyRef.current.length > 50) historyRef.current.shift()
+    }
     setPlayingItem(item)
+    playingItemRef.current = item
     // 這次實際用的是哪個子源。要在 catch 裡讀，所以宣告在 try 外面
     let usedSource: string | undefined
     try {
@@ -466,15 +607,25 @@ export function useMusicApp() {
         showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
         return
       }
-      const media = await pluginManager.getMediaSource(
-        plugin,
-        exclude.length > 0 ? { ...item, _exclude: exclude } : item,
-      )
+      // 若這首正是先前預取過的，直接用那個 URL，省掉一次網路往返。
+      // 手機切到背景後 JS 與網路都會被節流，換歌時能少一個網路步驟就少一個失敗點。
+      const prefetched = exclude.length === 0 && prefetchRef.current?.key === queueKey(item)
+        ? prefetchRef.current
+        : null
+      const media = prefetched
+        ? { url: prefetched.url, source: prefetched.source }
+        : await pluginManager.getMediaSource(
+            plugin,
+            exclude.length > 0 ? { ...item, _exclude: exclude } : item,
+          )
+      prefetchRef.current = null
       if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
       usedSource = media.source || item.subSource
 
       await player.play(media.url)
       setIsPlaying(true)
+      // 開始播了才預取下一首 —— 播放本身優先，預取只是背景準備
+      void prefetchNext()
     } catch (e: any) {
       const errMsg = e?.message || e || ''
       console.error(`[play] ${item.title} 失敗:`, errMsg)
@@ -522,6 +673,30 @@ export function useMusicApp() {
   const togglePlay = () => {
     player.toggle()
     setIsPlaying(player.isPlaying)
+  }
+
+  /** 下一首。鎖定畫面／耳機按鈕會呼叫，UI 也可用 */
+  const playNext = () => {
+    const q = queueRef.current
+    const nextIdx = pickNextIndex(q, new Set())
+    if (nextIdx < 0) return
+    play(q.list[nextIdx], { ...q, index: nextIdx }, { auto: true })
+  }
+
+  /**
+   * 上一首。從播放歷史回退，而不是用清單索引 —— 隨機模式下索引與實際播放
+   * 順序無關。沒有歷史時把當前這首重頭播（與一般播放器的行為一致）。
+   */
+  const playPrev = () => {
+    const prev = historyRef.current.pop()
+    if (!prev) {
+      player.seekTo(0)
+      setCurrentTime(0)
+      return
+    }
+    const q = queueRef.current
+    // skipHistory：這次是回退，不要把當前這首又推進歷史，否則會在兩首之間打轉
+    play(prev.item, { ...q, index: prev.index }, { auto: true, skipHistory: true })
   }
 
   /** 點進度條跳轉（音源端點支援 Range，可直接 seek） */
@@ -795,6 +970,8 @@ export function useMusicApp() {
     notification,
     officialInstalled,
     play,
+    playNext,
+    playPrev,
     playMode,
     playingItem,
     pluginError,

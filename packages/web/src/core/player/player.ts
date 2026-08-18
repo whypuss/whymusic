@@ -12,6 +12,12 @@ export class Player {
   constructor() {
     this.audio = new Audio()
     this.audio.crossOrigin = 'anonymous'
+    // iOS Safari：沒有 playsInline 會嘗試接管成全螢幕播放器，背景播放也更容易被中斷。
+    // TS 的 HTMLAudioElement 型別沒有這個屬性（規格上屬 HTMLVideoElement），
+    // 但 iOS 的 audio 元素確實會讀它，所以在執行時設。
+    ;(this.audio as any).playsInline = true
+    // 讓瀏覽器盡量預先緩衝。手機切到背景後 JS 會被凍結，緩衝越多越不容易斷
+    this.audio.preload = 'auto'
     this.listeners = new Map()
 
     // 自動通知外部
@@ -97,6 +103,15 @@ export class Player {
   /** 暫停 */
   pause(): void {
     this.audio.pause()
+  }
+
+  /**
+   * 續播目前這首（不重新載入音源）。
+   * 給 MediaSession 的 play 動作用 —— 鎖定畫面按播放時不該重新解析音源，
+   * 那會多一次網路往返，而背景中的網路請求正是最容易失敗的環節。
+   */
+  resume(): Promise<void> {
+    return this.audio.play()
   }
 
   /** 切換播放/暫停 */

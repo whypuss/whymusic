@@ -96,7 +96,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     albumDetail, albumLoading, albumTracks, currentTime, currentView, cyclePlayMode, duration,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
     hasMore, installPluginFromURL, isPlaying, keyword, loadMore, loading,
-    loadingMore, lockedItem, notification, play, playMode, playingItem,
+    loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
     recommendSongs, recommendUnsupported, removePlugin, results, search,
     searchType, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
@@ -447,6 +447,17 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           */}
           <div className="relative h-11 flex items-center">
             <span className="text-[11px] tabular-nums text-white/45">{formatTime(currentTime)}</span>
+            {/*
+              三顆一組絕對定位置中：播放鍵在正中線，前後曲各偏 44px。
+              用固定偏移而非 flex，兩側的時間與循環鍵才不會把它們推歪。
+            */}
+            <button onClick={playPrev} aria-label="上一首"
+              className="absolute left-1/2 -translate-x-[calc(50%+44px)] w-9 h-9 rounded-full
+                         flex items-center justify-center text-white/70 active:bg-white/10 transition">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+                <path d="M11 2v10L4.5 7 11 2z" /><rect x="2" y="2" width="1.8" height="10" rx="0.9" />
+              </svg>
+            </button>
             <button onClick={togglePlay}
               aria-label={isPlaying ? '暫停' : '播放'}
               className="absolute left-1/2 -translate-x-1/2 w-11 h-11 rounded-full bg-white text-black
@@ -459,6 +470,13 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 : <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
                     <path d="M4 2.5v10l9-5-9-5z" />
                   </svg>}
+            </button>
+            <button onClick={playNext} aria-label="下一首"
+              className="absolute left-1/2 translate-x-[calc(-50%+44px)] w-9 h-9 rounded-full
+                         flex items-center justify-center text-white/70 active:bg-white/10 transition">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+                <path d="M3 2v10l6.5-5L3 2z" /><rect x="10.2" y="2" width="1.8" height="10" rx="0.9" />
+              </svg>
             </button>
             <div className="ml-auto flex items-center gap-2.5">
               <span className="text-[11px] tabular-nums text-white/45">{formatTime(duration)}</span>
