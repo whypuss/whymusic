@@ -7,15 +7,18 @@
 
 ## 先看這個：兩種部署方式，揀一個
 
-| | **方案 A：VPS / 自建伺服器** | **方案 B：Cloudflare Pages** |
+| | **方案 A：Cloudflare Pages** | **方案 B：VPS / 自建伺服器** |
 |---|---|---|
-| 費用 | 一臺 VPS（$3-5/月） | **免費** |
-| 音源 | ✅ 全部（Audiomack + YouTube + 猫耳FM + 更多） | ⚠️ 僅 Audiomack |
-| 插件系統 | ✅ 支援第三方插件 | ❌ 不支援 |
-| 難易度 | 中等（要配 nginx） | 簡單（幾條命令） |
-| 適合 | 想要完整功能 | 只想快速用起來聽歌 |
+| 費用 | **免費** | 一臺 VPS（$3-5/月） |
+| 音源 | ✅ WhyMusic（netease / joox / audiomack） | ✅ 同左 |
+| 插件系統 | ✅ 支援貼網址安裝第三方插件 | ✅ 同左 |
+| 難易度 | 簡單（一條命令） | 中等（要配 nginx） |
+| 設定方式 | 改 `packages/web/worker/why.js` 的常數 | 用環境變數 |
+| 上游快取 | 只在單一 isolate 內 | 全站共用 |
 
-> **新手建議：** 先試 Cloudflare Pages（免費、5 分鐘搞定）。想要全部音源再升級到 VPS。
+> 兩者功能已經對齊 —— CF Pages 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了。
+> **建議先用 Cloudflare Pages**：免費、不用管伺服器。需要全站共用快取或想用環境變數
+> 調整設定，再考慮 VPS。
 
 ---
 
@@ -52,37 +55,34 @@ pnpm install
 wrangler login
 ```
 
-### 第四步：設定 Audiomack 憑證
-
-Audiomack 的搜尋功能需要 OAuth 憑證。程式碼預設使用 Audiomack 官方公開的 consumer key/secret（`audiomack-js` / `f3ac5b086f3eab260520d8e3049561e6`，與 MusicFree 原版插件一致），**開箱即用，無需額外設定**。如果想用自己的憑證，再覆蓋：
+### 第四步：部署
 
 ```bash
-cd packages/web
-
-# 設定搜尋憑證（按提示輸入，可選）
-wrangler secret put AUDIOMACK_OAUTH_CONSUMER_KEY
-wrangler secret put AUDIOMACK_OAUTH_SECRET
+pnpm deploy:cf
 ```
 
-> **Consumer Key 填 `audiomack-js`**（Audiomack 官方 App 使用的公開 Key）。
-> **Secret 填 `f3ac5b086f3eab260520d8e3049561e6`**（Audiomack 官方公開 secret，MusicFree 原版插件同款）。
+這一個指令會做完三件事：build 前端、把 API 打包成 `dist/_worker.js`、
+把音源插件複製進 `dist/plugins/`，然後上傳。
+專案名稱寫在 `deploy:cf` 裡（預設 `whymusicweb`），改成你自己的即可。
 
-### 第五步：部署
-
-```bash
-pnpm build
-wrangler pages deploy dist --project-name=musicweb
-```
-
-部署成功後，你會得到一個類似 `https://musicweb-xxxx.pages.dev` 的網址。用瀏覽器打開就能用了！
+部署成功後會得到 `https://<專案名>.pages.dev`。開啟後先到「音源」頁按「安裝」，
+才能搜尋與播放 —— app 預設不附音源。
 
 ### 之後更新程式碼
 
 ```bash
 git pull
-pnpm build
-wrangler pages deploy dist --project-name=musicweb
+pnpm deploy:cf
 ```
+
+> **為什麼不是 push 就自動部署**：用 wrangler 建立的專案屬於 Direct Upload，
+> Cloudflare 不允許事後改接 Git（官方文件明載這是單向選擇）。要 push 自動部署
+> 得在儀表板另建一個 Git 連動的專案，並把建置指令設成 `pnpm build:cf`、
+> 輸出目錄設成 `packages/web/dist`。
+>
+> 若用 Git 連動，務必用 `build:cf` 而不是 `build`：後者不會產生 `_worker.js`
+> 也不會複製 `plugins/`，結果所有 `/api/*` 會落到 SPA fallback 回 index.html，
+> 整站搜不到也播不了。
 
 ---
 
@@ -291,14 +291,25 @@ sudo certbot --nginx -d music.yourdomain.com
 
 ## 常見問題
 
-**Q: 搜尋沒有結果，顯示 401 錯誤？**
-A: Audiomack 憑證沒有設定正確。檢查 `/etc/musicweb.env` 或 Cloudflare secrets 是否填了正確的 secret（應為 `f3ac5b086f3eab260520d8e3049561e6`）。
+**Q: 搜尋沒有結果，或顯示「搜尋需要音源」？**
+A: app 預設不附音源。到「音源」頁按「安裝」即可 —— 那支插件由本站自己供應
+（`/plugins/whymusic.js`），不需要網路連得到 GitHub。
+
+**Q: 所有 `/api/*` 都回 HTML（搜尋、播放全失效）？**
+A: `_worker.js` 沒有被部署。用 `pnpm build:cf`（不是 `pnpm build`）重新建置 ——
+後者不會產生 `_worker.js`，請求就會落到 SPA fallback 回 index.html。
 
 **Q: 音頻播放到一半斷了？**
 A: 如果是 VPS 部署，檢查 nginx 配置中的 `proxy_buffering off;` 和 `proxy_read_timeout 60s;` 有沒有設定。
 
-**Q: Cloudflare Pages 能搜尋 YouTube 嗎？**
-A: 不行。Pages 版本只支援 Audiomack。想搜尋 YouTube、猫耳FM 等其他音源，需要 VPS 部署。
+**Q: Cloudflare Pages 版功能比較少嗎？**
+A: 不會，兩版功能已經對齊。差別只有兩點：CF 版的設定值寫在
+`packages/web/worker/why.js` 的模組常數裡（Workers 沒有 `process.env`）；
+上游回應的 TTL 快取只在單一 isolate 內有效，不像自托管版全站共用。
+
+**Q: YouTube 音源能用嗎？**
+A: 不能。YouTube 的 player API 現在對所有 client 都要求 PoToken/BotGuard，
+無憑證請求會被擋，兩種部署方式都一樣。程式碼保留了分支，待日後接上即可恢復。
 
 **Q: 怎麼更新程式碼？**
 A:
