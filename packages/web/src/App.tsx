@@ -1,48 +1,97 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
-import whymusicCode from './plugins/bundled/whymusic.js?raw'
 
 const player = new Player()
 const pluginManager = new PluginManager()
 
-/** 官方插件（內置代碼，無需 CDN 安裝） */
-const OFFICIAL_PLUGINS = [
-  // 單一聚合音源：netease / joox / audiomack 三個子音源由後端扇出並合併，
-  // 前端不再各自註冊，避免同一首歌在列表裡重複出現
-  { name: 'WhyMusic', code: whymusicCode },
-]
+/**
+ * 官方音源插件：不再打包進 app，改由 URL 安裝（寄存於本專案的 GitHub repo）。
+ * 這樣改一次音源邏輯只要推 GitHub，不必重新 build 前端。
+ *
+ * 這支插件呼叫本站後端的 /api/why-* 端點（子音源扇出、OAuth 簽名、跨源救援
+ * 都在後端），所以它只能配 musicweb 使用，貼到別的 MusicFree 客戶端不會動。
+ */
+const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
+const OFFICIAL_PLUGIN_URL =
+  'https://raw.githubusercontent.com/whypuss/musicweb/main/plugins/whymusic.js'
 
-// 加載插件（優先使用內置代碼）
+const STORAGE_CODES = 'musicfree-plugin-codes'
+const STORAGE_PLUGINS = 'musicfree-plugins'
+
 let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
+/** 官方插件載入失敗的原因，供 UI 顯示（沒有音源時整個 app 是空的，必須讓使用者看到） */
+let pluginInitError: string | null = null
+
+/** 讀 localStorage 快取的插件（含使用者自行安裝的第三方插件） */
+const readCachedPlugins = (): { name: string; code: string; enabled: boolean }[] => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_PLUGINS) || '[]')
+    if (!Array.isArray(raw)) return []
+    return raw.filter((p: any) => p && p.name && p.code)
+  } catch {
+    return []
+  }
+}
+
+const writeCachedPlugin = (name: string, code: string, enabled = true) => {
+  try {
+    const codes = JSON.parse(localStorage.getItem(STORAGE_CODES) || '{}')
+    codes[name] = code
+    localStorage.setItem(STORAGE_CODES, JSON.stringify(codes))
+    const list = readCachedPlugins().filter(p => p.name !== name)
+    list.push({ name, code, enabled })
+    localStorage.setItem(STORAGE_PLUGINS, JSON.stringify(list))
+  } catch (e) {
+    console.error('[plugin] cache write failed:', e)
+  }
+}
+
+/** 從 URL 取插件原始碼。raw.githubusercontent.com 回 CORS `*`，可直接抓 */
+const fetchPluginCode = async (url: string): Promise<string> => {
+  const response = await fetch(url, { cache: 'no-cache' })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const code = await response.text()
+  if (!code.trim()) throw new Error('回應為空')
+  return code
+}
+
+const loadPluginCode = (name: string, code: string) => {
+  pluginManager.loadPlugin(code, name)
+  pluginManager.setPluginEnabled(name, true)
+}
 
 const initPlugins = async () => {
   // StrictMode guard：React 18 會執行兩次，防止重複初始化
   if (pluginsInitialized) return
   pluginsInitialized = true
 
-  // 直接使用內置的 OFFICIAL_PLUGINS（確保使用最新版本）
-  console.log('[Auto-init] Using bundled OFFICIAL_PLUGINS (latest version)')
-  for (const p of OFFICIAL_PLUGINS) {
+  // 1) 先載入快取。第一次之後就能離線啟動，不必每次都等 GitHub
+  const cached = readCachedPlugins()
+  for (const p of cached) {
     try {
-      pluginManager.loadPlugin(p.code, p.name)
-      pluginManager.setPluginEnabled(p.name, true)
-      console.log(`[Auto-init] Loaded ${p.name} from bundled code (${p.code.length} chars)`)
+      loadPluginCode(p.name, p.code)
+      if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
+      console.log(`[init] ${p.name} 從快取載入 (${p.code.length} chars)`)
     } catch (e) {
-      console.error(`[Auto-init] Failed to load ${p.name} from bundled code:`, e)
+      console.error(`[init] 快取的 ${p.name} 載入失敗:`, e)
     }
   }
-  
-  // 將內置插件保存至 localStorage（覆蓋舊版本）
-  const plugins = OFFICIAL_PLUGINS.map(p => ({ name: p.name, code: p.code, enabled: true }))
-  const codes: Record<string, string> = {}
-  for (const p of plugins) { codes[p.name] = p.code }
-  localStorage.setItem('musicfree-plugin-codes', JSON.stringify(codes))
-  localStorage.setItem('musicfree-plugins', JSON.stringify(plugins))
-  
-  // 標記插件加載完成
+
+  // 2) 快取裡沒有官方插件 → 從 URL 安裝
+  if (!cached.some(p => p.name === OFFICIAL_PLUGIN_NAME)) {
+    try {
+      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL)
+      loadPluginCode(OFFICIAL_PLUGIN_NAME, code)
+      writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
+      console.log(`[init] ${OFFICIAL_PLUGIN_NAME} 從 URL 安裝 (${code.length} chars)`)
+    } catch (e: any) {
+      pluginInitError = `無法從 URL 載入音源插件（${e?.message || e}）`
+      console.error('[init] 官方插件安裝失敗:', e)
+    }
+  }
+
   pluginsReady = true
-  console.log('[Auto-init] All plugins loaded')
 }
 
 // 公開的等待方法
@@ -76,6 +125,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
+  // 官方插件改由 URL 載入，失敗時整個 app 沒有音源，必須讓使用者看到原因
+  const [pluginError, setPluginError] = useState<string | null>(null)
+  const [reloadingPlugin, setReloadingPlugin] = useState(false)
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
@@ -100,6 +152,7 @@ export default function App() {
       }
       setPluginToggles(toggles)
       setPluginKey(k => k + 1)
+      setPluginError(pluginInitError)
     }
     initializeState()
   }, [])
@@ -534,6 +587,32 @@ export default function App() {
   }
 
   // 依賴 pluginKey 來觸發重渲染，確保官方插件狀態正確
+  /**
+   * 從 URL 重抓官方插件並覆蓋快取。
+   * 插件現在寄存在 GitHub，改完推上去後要靠這個才會生效，
+   * 否則會一直用 localStorage 裡的舊版本。
+   */
+  const reloadOfficialPlugin = async () => {
+    setReloadingPlugin(true)
+    try {
+      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL)
+      pluginManager.removePlugin(OFFICIAL_PLUGIN_NAME)
+      loadPluginCode(OFFICIAL_PLUGIN_NAME, code)
+      writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
+      setPluginToggles(prev => ({ ...prev, [OFFICIAL_PLUGIN_NAME]: true }))
+      setPluginKey(k => k + 1)
+      setPluginError(null)
+      pluginInitError = null
+      showNotification(`已從 URL 重新載入 ${OFFICIAL_PLUGIN_NAME}`, 'success')
+    } catch (e: any) {
+      const msg = `重新載入失敗：${e?.message || e}`
+      setPluginError(msg)
+      showNotification(msg, 'error')
+    } finally {
+      setReloadingPlugin(false)
+    }
+  }
+
   const removePlugin = (name: string) => {
     pluginManager.removePlugin(name)
     setPluginToggles(prev => {
@@ -846,35 +925,54 @@ export default function App() {
             <div className="max-w-2xl mx-auto">
               <h2 className="text-xl font-bold mb-4">插件管理</h2>
 
-              {/* 官方插件（默認啟用） */}
+              {/* 官方插件：由 URL 安裝，非打包進 app */}
               <div className="mb-4">
-                <div className="text-sm text-gray-400 mb-2">官方插件</div>
+                <div className="text-sm text-gray-400 mb-2">官方音源</div>
+                {pluginError && (
+                  <div className="mb-2 p-3 bg-red-900/40 border border-red-700 rounded-lg text-sm">
+                    <div className="font-medium text-red-300">{pluginError}</div>
+                    <div className="text-red-400/80 mt-1">
+                      沒有音源時無法搜尋或播放，請確認網路後按「重新載入」。
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-2">
-                  {OFFICIAL_PLUGINS.map((p) => (
-                    <div key={p.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
-                      <div>
-                        <div className="font-medium">{p.name}</div>
-                        <div className="text-sm text-gray-400">v{pluginManager.getPlugin(p.name)?.version || '官方插件'}</div>
+                  <div className="p-3 bg-gray-800 rounded-lg">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium">{OFFICIAL_PLUGIN_NAME}</div>
+                        <div className="text-sm text-gray-400">
+                          {pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)
+                            ? `v${pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version || '?'}`
+                            : '未載入'}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {(() => {
-                          const enabled = pluginToggles[p.name] !== false
-                          return (
-                            <button
-                              onClick={() => togglePlugin(p.name)}
-                              className={`px-3 py-1 rounded text-sm ${
-                                enabled
-                                  ? 'bg-green-600 hover:bg-green-700'
-                                  : 'bg-gray-600 hover:bg-gray-700'
-                              }`}
-                            >
-                              {enabled ? '已啟用' : '已禁用'}
-                            </button>
-                          )
-                        })()}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={reloadOfficialPlugin}
+                          disabled={reloadingPlugin}
+                          className="px-3 py-1 rounded text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {reloadingPlugin ? '載入中…' : '重新載入'}
+                        </button>
+                        {pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME) && (
+                          <button
+                            onClick={() => togglePlugin(OFFICIAL_PLUGIN_NAME)}
+                            className={`px-3 py-1 rounded text-sm ${
+                              pluginToggles[OFFICIAL_PLUGIN_NAME] !== false
+                                ? 'bg-green-600 hover:bg-green-700'
+                                : 'bg-gray-600 hover:bg-gray-700'
+                            }`}
+                          >
+                            {pluginToggles[OFFICIAL_PLUGIN_NAME] !== false ? '已啟用' : '已禁用'}
+                          </button>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    <div className="text-xs text-gray-500 mt-2 break-all">
+                      來源：{OFFICIAL_PLUGIN_URL}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -883,7 +981,7 @@ export default function App() {
                 <div className="text-sm text-gray-400 mb-2">第三方插件</div>
                 <div className="space-y-2">
                   {pluginManager.getPlugins()
-                    .filter((plugin) => !OFFICIAL_PLUGINS.some(o => o.name === plugin.name))
+                    .filter((plugin) => plugin.name !== OFFICIAL_PLUGIN_NAME)
                     .map((plugin) => (
                       <div key={plugin.name} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
                         <div>
@@ -910,7 +1008,7 @@ export default function App() {
                         </div>
                       </div>
                     ))}
-                  {pluginManager.getPlugins().filter((plugin) => !OFFICIAL_PLUGINS.some(o => o.name === plugin.name)).length === 0 && (
+                  {pluginManager.getPlugins().filter((plugin) => plugin.name !== OFFICIAL_PLUGIN_NAME).length === 0 && (
                     <div className="text-sm text-gray-500 py-4 text-center">尚無第三方插件</div>
                   )}
                 </div>
