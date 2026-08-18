@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "pnpm --filter @musicfree/web dev",
     "build": "pnpm --filter @musicfree/web build",
-    "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck"
+    "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck",
+    "build:cf": "pnpm build && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/"
   },
   "dependencies": {
     "crypto-js": "^4.2.0"

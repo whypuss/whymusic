@@ -124,8 +124,20 @@ YouTube 的 `youtubei/v1/player` 端點現在對所有 client（`ANDROID_MUSIC` 
 
 兩種方式，選擇適合你的：
 
-- **Cloudflare Pages（免費，僅 Audiomack）** — 約 5 分鐘，適合想快速體驗的人
-- **VPS 自托管（完整功能）** — 需要一臺 Linux 伺服器 + nginx，支援全部音源
+- **Cloudflare Pages（免費，功能同等）** — 約 5 分鐘，不需要伺服器
+- **VPS 自托管** — 需要一臺 Linux 伺服器 + nginx
+
+兩者功能已經對齊：CF Pages Functions（`packages/web/functions/`）把 WhyMusic
+的三子源扇出、繁簡歸一化、跨子源救援全部移植過去了，Audiomack 的 OAuth 簽名
+改用 Web Crypto（Workers 沒有 `node:crypto`）。CF 版部署指令：
+
+```bash
+pnpm build:cf     # build 並把 plugins/ 複製進 dist/（音源插件要當靜態檔供應）
+cd packages/web && npx wrangler pages deploy dist --project-name=<你的專案>
+```
+
+CF 版的兩點差異：設定值寫在 `functions/_lib/why.js` 的模組常數裡（Workers
+沒有 `process.env`）；TTL 快取只在單一 isolate 內有效，不像自托管版全站共用。
 
 具體步驟見 [DEPLOY.md](DEPLOY.md)。
 
