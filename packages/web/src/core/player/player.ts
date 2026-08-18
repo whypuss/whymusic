@@ -40,9 +40,10 @@ export class Player {
    *
    * 掛上去之後絕對不能再移除：規格規定元素一旦被移出文件，UA 必須暫停它。
    *
-   * 刻意不設 display:none —— 沒有 controls 屬性的 <audio> 本來就不產生任何視覺
-   * 方塊、不佔空間，而 Chrome 有些媒體邏輯會跳過「未被算繪」的元素，加了反而
-   * 可能讓掛進 DOM 這件事失去意義。
+   * 不必也不該自己設 display:none —— Chrome 的 UA 樣式表本來就有
+   * `audio:not([controls]) { display: none }`，實測掛上去之後 computed style 就是
+   * none。（曾經懷疑「未被算繪」會讓 Android 忽略這個元素，這個猜測是錯的：若
+   * 成立，全世界純音訊網站都不會有媒體通知。）
    */
   private attachToDocument(): void {
     if (typeof document === 'undefined') return
