@@ -126,8 +126,11 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
         <div className="max-w-2xl mx-auto px-4 h-11 flex items-center gap-2">
-          <span className="w-[22px] h-[22px] rounded-[6px] bg-[#0A84FF] flex items-center justify-center
-                           text-[13px] font-bold text-white">W</span>
+          <img
+            src="/logo.png"
+            alt="W"
+            className="w-[22px] h-[22px] rounded-[6px] object-cover"
+          />
           <span className="text-[16px] font-semibold tracking-tight">WhyMusic</span>
         </div>
       </header>

@@ -100,7 +100,14 @@ export default function ClassicUI({ app, onSwitchUi }: { app: MusicApp; onSwitch
 
       {/* Header */}
       <div className="h-16 px-4 md:px-6 flex items-center justify-between border-b border-gray-800">
-        <h1 className="text-xl font-bold">WhyMusic</h1>
+        <div className="flex items-center gap-2">
+          <img
+            src="/logo.png"
+            alt="WhyMusic"
+            className="w-8 h-8 rounded-md object-cover"
+          />
+          <h1 className="text-xl font-bold">WhyMusic</h1>
+        </div>
       </div>
 
       {/* Main Content */}
