@@ -12,6 +12,9 @@ import { createHmac } from 'node:crypto'
 
 const PORT = Number(process.env.PORT) || 8788
 const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
+// 音源插件目錄（repo 根層 plugins/）。由本服務直接供應，執行時不碰 GitHub。
+const PLUGINS_DIR = process.env.PLUGINS_DIR
+  || path.resolve(import.meta.dirname, '../../../plugins')
 
 // ── OAuth 1.0 Configuration ────────────────────────────────────────
 // Load from environment variables. Defaults are Audiomack's public
@@ -782,13 +785,17 @@ function jsonResponse(res, data, status = 200) {
   res.end(JSON.stringify(data))
 }
 
-async function serveStatic(res, filePath) {
+async function serveStatic(res, filePath, extraHeaders) {
   const ext = path.extname(filePath)
   const contentType = MIME_TYPES[ext] || 'application/octet-stream'
 
   try {
     const content = await fs.promises.readFile(filePath)
-    res.writeHead(200, { 'Content-Type': contentType, ...corsHeaders() })
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      ...corsHeaders(),
+      ...extraHeaders,
+    })
     res.end(content)
   } catch {
     return false
@@ -1264,6 +1271,27 @@ const server = http.createServer(async (req, res) => {
         const responseBody = await proxyReq.arrayBuffer()
         res.end(Buffer.from(responseBody))
       }
+      return
+    }
+
+    // ── 插件檔 ───────────────────────────────────────────
+    // 音源插件由本服務直接供應，執行時不依賴 GitHub。插件原始碼放在 repo
+    // 的 plugins/，隨部署一起上機；GitHub 只是它在版控裡的位置。
+    // 檔名白名單化，避免 ../ 之類的路徑穿越。
+    if (pathname.startsWith('/plugins/')) {
+      const name = pathname.slice('/plugins/'.length)
+      if (!/^[a-zA-Z0-9_-]+\.js$/.test(name)) {
+        jsonResponse(res, { error: 'Invalid plugin name' }, 400)
+        return
+      }
+      const pluginPath = path.join(PLUGINS_DIR, name)
+      // 插件會被使用者手動「重新載入」，不讓瀏覽器長期快取
+      const servedPlugin = await serveStatic(res, pluginPath, {
+        'Cache-Control': 'no-cache',
+        'Content-Type': 'application/javascript; charset=utf-8',
+      })
+      if (servedPlugin) return
+      jsonResponse(res, { error: `Plugin not found: ${name}` }, 404)
       return
     }
 

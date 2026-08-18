@@ -138,6 +138,12 @@ pnpm build
 
 編譯完成後，前端檔案在 `packages/web/dist/`。
 
+> 若不是在機器上直接 clone，而是從本機上傳檔案，記得三樣都要傳：
+> `packages/web/dist/`（前端）、`packages/web/scripts/server.mjs`（後端）、
+> 以及 **`plugins/`（音源插件）**。少了 `plugins/` 的話後端會在
+> `/plugins/whymusic.js` 回 404，前端就載不到音源、整站不能搜尋或播放。
+> 插件目錄預設是 repo 根層的 `plugins/`，可用 `PLUGINS_DIR` 覆寫。
+
 ### 第三步：設定環境變數
 
 ```bash

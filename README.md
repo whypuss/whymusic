@@ -29,7 +29,13 @@ WhyMusic 的子音源：
 `1005 Not authorized`），後端會用歌名+歌手到其餘子音源找同一首歌，
 比對時做繁簡歸一化，所以查「浮誇」也能命中簡體源的「浮夸」。
 
-內置插件源碼位於 `packages/web/src/plugins/bundled/`，也可以自行新增第三方插件。
+官方音源插件不打包進前端，而是由後端從 `plugins/` 供應，前端在首次開啟時
+從 `/plugins/whymusic.js` 安裝並快取到 localStorage。改音源邏輯只要換掉那個
+檔案、在插件頁按「重新載入」即可生效，不必重新 build 前端。
+
+執行時不依賴任何外部託管站：插件與 app 同源。使用者也可以在插件頁貼 URL
+安裝第三方插件，外部 URL 會由後端經 `/api/proxy` 代抓（瀏覽器不必連得到
+該託管站）。其餘內置插件源碼仍在 `packages/web/src/plugins/bundled/`。
 
 #### 關於 YouTube 音源
 

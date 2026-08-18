@@ -5,15 +5,20 @@ const player = new Player()
 const pluginManager = new PluginManager()
 
 /**
- * 官方音源插件：不再打包進 app，改由 URL 安裝（寄存於本專案的 GitHub repo）。
- * 這樣改一次音源邏輯只要推 GitHub，不必重新 build 前端。
+ * 官方音源插件：不打包進 app，改由 URL 安裝，但那個 URL 是**本站自己的**
+ * /plugins/whymusic.js（後端從 repo 的 plugins/ 直接供應）。
  *
- * 這支插件呼叫本站後端的 /api/why-* 端點（子音源扇出、OAuth 簽名、跨源救援
- * 都在後端），所以它只能配 musicweb 使用，貼到別的 MusicFree 客戶端不會動。
+ * 為什麼不是 GitHub raw：執行時不該依賴 GitHub。先前指向 raw.githubusercontent.com
+ * 造成兩個實際故障 —— 使用者網路連不到 GitHub 時整站沒有音源（瀏覽器層
+ * Failed to fetch），以及 GitHub 的 max-age=300 CDN 快取讓「重新載入」抓回舊碼。
+ * 改成同源後兩者都不存在，也不必再經 /api/proxy 繞道。
+ * GitHub 仍是這支插件在版控裡的位置，但只在部署時參與，不在執行時。
+ *
+ * 插件呼叫本站後端的 /api/why-* 端點（子音源扇出、OAuth 簽名、跨源救援都在
+ * 後端），所以它只能配 musicweb 使用，貼到別的 MusicFree 客戶端不會動。
  */
 const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
-const OFFICIAL_PLUGIN_URL =
-  'https://raw.githubusercontent.com/whypuss/musicweb/main/plugins/whymusic.js'
+const OFFICIAL_PLUGIN_URL = '/plugins/whymusic.js'
 
 const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
@@ -48,23 +53,25 @@ const writeCachedPlugin = (name: string, code: string, enabled = true) => {
 }
 
 /**
- * 從 URL 取插件原始碼，一律經本站後端 /api/proxy 代抓。
+ * 從 URL 取插件原始碼。
  *
- * 不讓瀏覽器直連 GitHub 的原因：那等於要求每個使用者的網路都連得到
- * raw.githubusercontent.com，而它在部分地區並不穩定，直連會是瀏覽器層的
- * `Failed to fetch`（連 HTTP 狀態碼都拿不到，錯誤訊息也沒有參考價值）。
- * 由後端代抓後，瀏覽器只需連得到本站，同源請求也不必處理 CORS。
+ * 同源 URL（官方音源 /plugins/*.js）直接抓：沒有 CORS 問題，也不必經代理。
+ * 外部 URL（使用者自行安裝的第三方插件）才走 /api/proxy 由後端代抓 —— 讓
+ * 瀏覽器直連第三方託管站，等於要求每個使用者的網路都連得到那個站，而
+ * raw.githubusercontent.com 這類站點在部分地區並不穩定，失敗時是瀏覽器層的
+ * `Failed to fetch`，連狀態碼都拿不到。
  *
- * bustCache：手動「重新載入」時必須加。GitHub 對 raw 檔案回
- * `cache-control: max-age=300`，不換快取鍵的話會抓回 CDN 邊緣那份過期副本，
- * 結果推了新版卻載入舊碼。
+ * bustCache：手動「重新載入」時加，換掉快取鍵，避免抓回過期副本。
  */
 const fetchPluginCode = async (url: string, bustCache = false): Promise<string> => {
   const target = bustCache
     ? `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`
     : url
-  const proxied = `/api/proxy?url=${encodeURIComponent(target)}&method=GET`
-  const response = await fetch(proxied, { cache: 'no-store' })
+  const isSameOrigin = target.startsWith('/') || target.startsWith(window.location.origin)
+  const request = isSameOrigin
+    ? target
+    : `/api/proxy?url=${encodeURIComponent(target)}&method=GET`
+  const response = await fetch(request, { cache: 'no-store' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const code = await response.text()
   if (!code.trim()) throw new Error('回應為空')
