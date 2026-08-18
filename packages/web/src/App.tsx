@@ -25,8 +25,6 @@ const STORAGE_PLUGINS = 'musicfree-plugins'
 
 let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
-/** 官方插件載入失敗的原因，供 UI 顯示（沒有音源時整個 app 是空的，必須讓使用者看到） */
-let pluginInitError: string | null = null
 
 /** 讀 localStorage 快取的插件（含使用者自行安裝的第三方插件） */
 const readCachedPlugins = (): { name: string; code: string; enabled: boolean }[] => {
@@ -106,19 +104,9 @@ const initPlugins = async () => {
     }
   }
 
-  // 2) 快取裡沒有官方插件 → 從 URL 安裝
-  if (!cached.some(p => p.name === OFFICIAL_PLUGIN_NAME)) {
-    try {
-      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL)
-      loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
-      writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
-      console.log(`[init] ${OFFICIAL_PLUGIN_NAME} 從 URL 安裝 (${code.length} chars)`)
-    } catch (e: any) {
-      pluginInitError = `無法從 URL 載入音源插件（${e?.message || e}）`
-      console.error('[init] 官方插件安裝失敗:', e)
-    }
-  }
-
+  // 預設不附音源：不在這裡自動安裝任何插件。使用者到插件頁自行匯入
+  // （內置音源列在那裡可一鍵安裝，也可貼任意第三方插件 URL）。
+  // 裝過一次就進 localStorage 快取，之後開啟即載入。
   pluginsReady = true
 }
 
@@ -153,7 +141,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
-  // 官方插件改由 URL 載入，失敗時整個 app 沒有音源，必須讓使用者看到原因
+  // 安裝／重新載入音源失敗的原因（預設不自動安裝，所以這只在使用者主動操作後才有值）
   const [pluginError, setPluginError] = useState<string | null>(null)
   const [reloadingPlugin, setReloadingPlugin] = useState(false)
   const [searchType, setSearchType] = useState<SearchType>('music')
@@ -169,6 +157,11 @@ export default function App() {
   const [albumLoading, setAlbumLoading] = useState(false)
 
   // 依賴 pluginKey 來觸發重渲染
+  /** 內置音源是否已安裝。依 pluginKey 重算（安裝／移除／啟用都會遞增它） */
+  const officialInstalled = useMemo(
+    () => !!pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME),
+    [pluginKey],
+  )
 
   useEffect(() => {
     const initializeState = async () => {
@@ -180,7 +173,7 @@ export default function App() {
       }
       setPluginToggles(toggles)
       setPluginKey(k => k + 1)
-      setPluginError(pluginInitError)
+
     }
     initializeState()
   }, [])
@@ -618,27 +611,26 @@ export default function App() {
 
   // 依賴 pluginKey 來觸發重渲染，確保官方插件狀態正確
   /**
-   * 從 URL 重抓官方插件並覆蓋快取。
-   * 插件現在寄存在 GitHub，改完推上去後要靠這個才會生效，
+   * 安裝或更新內置音源（同源 /plugins/whymusic.js）。
+   * 首次是「安裝」，之後是「更新」—— 換掉插件檔後按這個才會生效，
    * 否則會一直用 localStorage 裡的舊版本。
    */
-  const reloadOfficialPlugin = async () => {
+  const installOfficialPlugin = async () => {
     setReloadingPlugin(true)
     try {
       const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL, true)
       pluginManager.removePlugin(OFFICIAL_PLUGIN_NAME)
-      loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
-      writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
-      setPluginToggles(prev => ({ ...prev, [OFFICIAL_PLUGIN_NAME]: true }))
+      const registered = loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
+      writeCachedPlugin(registered, code)
+      setPluginToggles(prev => ({ ...prev, [registered]: true }))
       setPluginKey(k => k + 1)
       setPluginError(null)
-      pluginInitError = null
       // 帶上版本，使用者才看得出到底有沒有真的換版（先前只說「成功」，
       // 抓回舊碼時完全看不出來）
-      const version = pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version || '?'
-      showNotification(`已重新載入 ${OFFICIAL_PLUGIN_NAME} v${version}`, 'success')
+      const version = pluginManager.getPlugin(registered)?.version || '?'
+      showNotification(`已安裝 ${registered} v${version}`, 'success')
     } catch (e: any) {
-      const msg = `重新載入失敗：${e?.message || e}`
+      const msg = `安裝失敗：${e?.message || e}`
       setPluginError(msg)
       showNotification(msg, 'error')
     } finally {
@@ -653,7 +645,11 @@ export default function App() {
       delete newToggles[name]
       return newToggles
     })
-    showNotification(`插件 "${name}" 已移除`, 'success')
+    // 必須遞增 pluginKey：officialInstalled 是依它重算的，少了這行卡片會停在
+    // 已安裝狀態（按鈕仍是「更新／已啟用／移除」、版號變成 v?），要重載才正確
+    setPluginKey(k => k + 1)
+    setPluginError(null)
+    showNotification(`插件「${name}」已移除`, 'success')
     savePluginsToStorage()
   }
 
@@ -688,7 +684,7 @@ export default function App() {
     }
   }
 
-  // 依賴 pluginKey 來觸發重渲染，確保商店按鈕狀態正確
+  // 依賴 pluginKey 來觸發重渲染，確保插件按鈕狀態正確
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-800 to-indigo-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -828,8 +824,8 @@ export default function App() {
                   <div className="space-y-2 max-w-2xl mx-auto">
                     {results.length === 0 && !loading && (
                       <div className="text-center text-gray-500 py-8">
-                        {pluginManager.getPlugins().length === 0
-                          ? '請先在「商店」安裝插件。'
+                        {pluginManager.getEnabledPlugins().length === 0
+                          ? '搜尋需要音源。請到下方「插件」頁安裝。'
                           : '未找到結果。'}
                       </div>
                     )}
@@ -958,14 +954,19 @@ export default function App() {
             <div className="max-w-2xl mx-auto">
               <h2 className="text-xl font-bold mb-4">插件管理</h2>
 
-              {/* 官方插件：由 URL 安裝，非打包進 app */}
+              {/* 內置音源：預設不安裝，由使用者自行匯入 */}
               <div className="mb-4">
-                <div className="text-sm text-gray-400 mb-2">官方音源</div>
+                <div className="text-sm text-gray-400 mb-2">內置音源</div>
                 {pluginError && (
                   <div className="mb-2 p-3 bg-red-900/40 border border-red-700 rounded-lg text-sm">
                     <div className="font-medium text-red-300">{pluginError}</div>
-                    <div className="text-red-400/80 mt-1">
-                      沒有音源時無法搜尋或播放，請確認網路後按「重新載入」。
+                  </div>
+                )}
+                {!officialInstalled && (
+                  <div className="mb-2 p-3 bg-blue-900/30 border border-blue-700/60 rounded-lg text-sm">
+                    <div className="font-medium text-blue-200">尚未安裝音源</div>
+                    <div className="text-blue-300/80 mt-1">
+                      安裝後才能搜尋歌曲。推薦頁與播放不需要音源即可使用。
                     </div>
                   </div>
                 )}
@@ -975,30 +976,38 @@ export default function App() {
                       <div className="min-w-0">
                         <div className="font-medium">{OFFICIAL_PLUGIN_NAME}</div>
                         <div className="text-sm text-gray-400">
-                          {pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)
+                          {officialInstalled
                             ? `v${pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version || '?'}`
-                            : '未載入'}
+                            : '未安裝'}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button
-                          onClick={reloadOfficialPlugin}
+                          onClick={installOfficialPlugin}
                           disabled={reloadingPlugin}
                           className="px-3 py-1 rounded text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
                         >
-                          {reloadingPlugin ? '載入中…' : '重新載入'}
+                          {reloadingPlugin ? '處理中…' : officialInstalled ? '更新' : '安裝'}
                         </button>
-                        {pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME) && (
-                          <button
-                            onClick={() => togglePlugin(OFFICIAL_PLUGIN_NAME)}
-                            className={`px-3 py-1 rounded text-sm ${
-                              pluginToggles[OFFICIAL_PLUGIN_NAME] !== false
-                                ? 'bg-green-600 hover:bg-green-700'
-                                : 'bg-gray-600 hover:bg-gray-700'
-                            }`}
-                          >
-                            {pluginToggles[OFFICIAL_PLUGIN_NAME] !== false ? '已啟用' : '已禁用'}
-                          </button>
+                        {officialInstalled && (
+                          <>
+                            <button
+                              onClick={() => togglePlugin(OFFICIAL_PLUGIN_NAME)}
+                              className={`px-3 py-1 rounded text-sm ${
+                                pluginToggles[OFFICIAL_PLUGIN_NAME] !== false
+                                  ? 'bg-green-600 hover:bg-green-700'
+                                  : 'bg-gray-600 hover:bg-gray-700'
+                              }`}
+                            >
+                              {pluginToggles[OFFICIAL_PLUGIN_NAME] !== false ? '已啟用' : '已禁用'}
+                            </button>
+                            <button
+                              onClick={() => removePlugin(OFFICIAL_PLUGIN_NAME)}
+                              className="px-3 py-1 rounded text-sm bg-red-700 hover:bg-red-800"
+                            >
+                              移除
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>

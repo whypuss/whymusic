@@ -29,9 +29,16 @@ WhyMusic 的子音源：
 `1005 Not authorized`），後端會用歌名+歌手到其餘子音源找同一首歌，
 比對時做繁簡歸一化，所以查「浮誇」也能命中簡體源的「浮夸」。
 
-官方音源插件不打包進前端，而是由後端從 `plugins/` 供應，前端在首次開啟時
-從 `/plugins/whymusic.js` 安裝並快取到 localStorage。改音源邏輯只要換掉那個
-檔案、在插件頁按「重新載入」即可生效，不必重新 build 前端。
+**預設不附音源**：app 出廠不帶任何音源，使用者到「插件」頁自行匯入。內置音源
+列在那裡可一鍵安裝（來源是同源的 `/plugins/whymusic.js`，由後端從 repo 的
+`plugins/` 供應），也可以貼任意第三方插件 URL。裝過一次就快取到 localStorage，
+之後開啟即載入。
+
+改音源邏輯只要換掉 `plugins/whymusic.js`、在插件頁按「更新」即可生效，
+不必重新 build 前端。
+
+音源目前只服務**搜尋**：推薦頁與播放直接走後端 `/api/recommend`、`/api/play`，
+沒裝音源也能用。
 
 執行時不依賴任何外部託管站：插件與 app 同源。使用者也可以在插件頁貼 URL
 安裝第三方插件，外部 URL 會由後端經 `/api/proxy` 代抓（瀏覽器不必連得到
@@ -93,12 +100,14 @@ pnpm typecheck        # 類型檢查
 
 ```
 musicweb/
+├── plugins/                  # 音源插件（由後端供應於 /plugins/*.js，部署時要一起上機）
+│   └── whymusic.js
 ├── packages/
 │   ├── core/                 # 播放器 + 插件管理器
 │   └── web/                  # Web 前端 + 後端
-│       ├── src/plugins/      # 內置音源插件
+│       ├── src/plugins/      # 其餘內置插件源碼（猫耳FM / YouTube 等）
 │       ├── functions/api/    # Cloudflare Pages Functions
-│       └── scripts/server.mjs   # 自托管後端（監聽 :8788）
+│       └── scripts/server.mjs   # 自托管後端（預設 :8788，可用 PORT 覆寫）
 ├── .env.example
 ├── DEPLOY.md
 └── package.json
