@@ -37,6 +37,13 @@ function isIOS(): boolean {
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     if (isIOS()) {
+      // iOS 16.4+ 的 Safari 會讀 manifest 的 display，加到主畫面就會變成獨立模式
+      // —— 而獨立模式在 iOS 上鎖屏播不下去（詳見 index.html 的註解）。把連結移掉，
+      // 「加到主畫面」就只做成一個開 Safari 的捷徑。Android 要靠這個 manifest 安裝，
+      // 所以只在 iOS 移除。iOS 讀 manifest 的時機是使用者按「加到主畫面」的當下，
+      // 晚於頁面載入，所以在這裡移除來得及。
+      document.querySelector('link[rel="manifest"]')?.remove()
+
       void (async () => {
         try {
           const regs = await navigator.serviceWorker.getRegistrations()

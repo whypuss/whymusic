@@ -25,10 +25,17 @@
       網頁端沒有任何 API 能覆寫系統的鎖屏通知設定，這是唯一還剩的槓桿。
     -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!--
+      刻意沒有 apple-mobile-web-app-capable。
+      實測：iOS 加到主畫面、以獨立模式（standalone）開啟後，鎖屏就播不下去；直接用
+      Safari 反而完全正常。iOS 的獨立模式對背景音訊的支援一直很差，被切走或鎖屏時
+      比 Safari 裡的頁面凍結得兇得多。對一個音樂播放器來說背景播放就是本體，所以
+      iOS 不該進獨立模式 —— 讓「加到主畫面」只做成一個開 Safari 的捷徑。
+      iOS 16.4 之後 Safari 也會讀 manifest 的 display，那條路在 main.tsx 裡處理
+      （只有 iOS 會把 manifest 連結移掉，Android 需要它才能安裝）。
+    -->
     <meta name="apple-mobile-web-app-title" content="WhyMusic" />
     <link rel="apple-touch-icon" href="/favicon-192.png" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>WhyMusic</title>
     <!-- crypto-js 必須預載入，MusicFree 插件依賴其同步 API -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
