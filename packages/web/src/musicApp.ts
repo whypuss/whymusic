@@ -588,6 +588,10 @@ export function useMusicApp() {
       const media = await pluginManager.getMediaSource(plugin, next)
       if (media?.url) {
         prefetchRef.current = { key, url: media.url, source: media.source }
+        // 光是拿到 URL 還不夠 —— 還要把它載進播放器閒置的那個 audio 元素。
+        // 鎖屏換歌時只對已載好的元素呼叫 play()，不動 src 也不碰網路，
+        // 這是 iOS 背景續播唯一穩的做法（詳見 player.ts 開頭）
+        player.preload(media.url)
       }
     } catch {
       // 預取失敗不是問題，換歌時會正常走一次解析
@@ -611,6 +615,11 @@ export function useMusicApp() {
     queue?: PlayQueue,
     opts?: { auto?: boolean; skip?: Set<number>; exclude?: string[]; skipHistory?: boolean },
   ) => {
+    // 必須是這個函式的第一個同步動作。使用者點下曲目時這裡還在手勢的同步階段，
+    // 一旦 await 過去手勢就過期了 —— 而 iOS 要求每個 audio 元素的首次播放來自
+    // 手勢，第二個元素沒在這裡解鎖，之後在背景就永遠喚不起來。
+    player.unlock()
+
     const prevQueue = queueRef.current
     const prevItem = playingItemRef.current
     if (queue) queueRef.current = queue
