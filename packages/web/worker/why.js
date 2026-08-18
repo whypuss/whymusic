@@ -379,6 +379,14 @@ async function searchWhyMusic(keyword, page = 1, count = 20) {
     console.error(`[why] search failed on ${WHY_SOURCES[i]}: ${r.reason?.message}`)
     return []
   })
+  // 全部子源都失敗時要拋錯，不能回空陣列。「查無此歌」和「上游整個連不上」若都
+  // 顯示成一片空白，使用者只能猜是沒這首歌、還是程式壞了 —— GD 開始擋 Cloudflare
+  // Worker 時就是這樣悶了一段時間才被發現。
+  if (settled.every(r => r.status === 'rejected')) {
+    throw new Error(
+      `所有子音源都失敗：${settled.map((r, i) => `${WHY_SOURCES[i]}（${r.reason?.message}）`).join('；')}`,
+    )
+  }
 
   const seen = new Set()
   const merged = []
@@ -467,6 +475,7 @@ async function recommendWhyMusic(mode = 'hot', limit = 40) {
   const listIds = GD_TOPLISTS[mode] || GD_TOPLISTS.hot
   const seen = new Set()
   const out = []
+  const errors = []
   for (const listId of listIds) {
     if (out.length >= limit) break
     let tracks = []
@@ -475,6 +484,7 @@ async function recommendWhyMusic(mode = 'hot', limit = 40) {
       tracks = sortTracksByMode(data?.playlist?.tracks || [], mode)
     } catch (err) {
       console.error(`[gd] playlist ${listId} failed: ${err.message}`)
+      errors.push(`${listId}（${err.message}）`)
       continue
     }
     for (const track of tracks) {
@@ -501,6 +511,10 @@ async function recommendWhyMusic(mode = 'hot', limit = 40) {
         type: 'music',
       })
     }
+  }
+  // 同上：榜單全取不到就要拋錯，別讓推薦頁靜靜地空著
+  if (out.length === 0 && errors.length > 0) {
+    throw new Error(`榜單全部取不到：${errors.join('；')}`)
   }
   return out
 }
