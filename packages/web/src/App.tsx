@@ -47,18 +47,39 @@ const writeCachedPlugin = (name: string, code: string, enabled = true) => {
   }
 }
 
-/** 從 URL 取插件原始碼。raw.githubusercontent.com 回 CORS `*`，可直接抓 */
-const fetchPluginCode = async (url: string): Promise<string> => {
-  const response = await fetch(url, { cache: 'no-cache' })
+/**
+ * 從 URL 取插件原始碼，一律經本站後端 /api/proxy 代抓。
+ *
+ * 不讓瀏覽器直連 GitHub 的原因：那等於要求每個使用者的網路都連得到
+ * raw.githubusercontent.com，而它在部分地區並不穩定，直連會是瀏覽器層的
+ * `Failed to fetch`（連 HTTP 狀態碼都拿不到，錯誤訊息也沒有參考價值）。
+ * 由後端代抓後，瀏覽器只需連得到本站，同源請求也不必處理 CORS。
+ *
+ * bustCache：手動「重新載入」時必須加。GitHub 對 raw 檔案回
+ * `cache-control: max-age=300`，不換快取鍵的話會抓回 CDN 邊緣那份過期副本，
+ * 結果推了新版卻載入舊碼。
+ */
+const fetchPluginCode = async (url: string, bustCache = false): Promise<string> => {
+  const target = bustCache
+    ? `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`
+    : url
+  const proxied = `/api/proxy?url=${encodeURIComponent(target)}&method=GET`
+  const response = await fetch(proxied, { cache: 'no-store' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const code = await response.text()
   if (!code.trim()) throw new Error('回應為空')
+  // 代理把上游錯誤也當內容回傳，這裡確認真的是插件碼而不是錯誤頁
+  if (!code.includes('module.exports') && !code.includes('exports.')) {
+    throw new Error('回應不是插件代碼（可能是上游錯誤頁）')
+  }
   return code
 }
 
-const loadPluginCode = (name: string, code: string) => {
-  pluginManager.loadPlugin(code, name)
-  pluginManager.setPluginEnabled(name, true)
+/** 載入並啟用插件，回傳實際註冊的名稱（可能是插件自己宣告的 platform） */
+const loadPluginCode = (code: string, fallbackName?: string): string => {
+  const registered = pluginManager.loadPlugin(code, fallbackName)
+  pluginManager.setPluginEnabled(registered, true)
+  return registered
 }
 
 const initPlugins = async () => {
@@ -70,7 +91,7 @@ const initPlugins = async () => {
   const cached = readCachedPlugins()
   for (const p of cached) {
     try {
-      loadPluginCode(p.name, p.code)
+      loadPluginCode(p.code, p.name)
       if (!p.enabled) pluginManager.setPluginEnabled(p.name, false)
       console.log(`[init] ${p.name} 從快取載入 (${p.code.length} chars)`)
     } catch (e) {
@@ -82,7 +103,7 @@ const initPlugins = async () => {
   if (!cached.some(p => p.name === OFFICIAL_PLUGIN_NAME)) {
     try {
       const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL)
-      loadPluginCode(OFFICIAL_PLUGIN_NAME, code)
+      loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
       writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
       console.log(`[init] ${OFFICIAL_PLUGIN_NAME} 從 URL 安裝 (${code.length} chars)`)
     } catch (e: any) {
@@ -561,26 +582,28 @@ export default function App() {
 
   const installPluginFromURL = async () => {
     const url = pluginUrl.trim()
-    const name = pluginName.trim()
-    if (!url || !name) {
-      showNotification('請輸入插件 URL 和名稱', 'error')
+    if (!url) {
+      showNotification('請輸入插件 URL', 'error')
       return
     }
     try {
       setLoading(true)
-      const response = await fetch(url)
-      if (!response.ok) throw new Error('Failed to fetch')
-      const code = await response.text()
-      pluginManager.loadPlugin(code, name)
-      savePluginCode(name, code)
-      setPluginToggles(prev => ({ ...prev, [name]: true }))
-      showNotification(`插件 "${name}" 已安裝`, 'success')
+      // 與官方插件走同一條路：經後端代抓 + 換快取鍵，避免瀏覽器直連不到
+      // 插件託管站（Failed to fetch），也避免抓回 CDN 的過期副本
+      const code = await fetchPluginCode(url, true)
+      // 名稱優先用插件自己宣告的 platform，輸入框留空也能裝
+      const registered = loadPluginCode(code, pluginName.trim() || undefined)
+      savePluginCode(registered, code)
+      setPluginToggles(prev => ({ ...prev, [registered]: true }))
+      setPluginKey(k => k + 1)
+      showNotification(`插件「${registered}」已安裝`, 'success')
       setPluginUrl('')
       setPluginName('')
       savePluginsToStorage()
-    } catch (e) {
+    } catch (e: any) {
+      // 原本只說「插件安裝失敗」，看不出是網路不通、URL 錯還是代碼有問題
       console.error('Install error:', e)
-      showNotification('插件安裝失敗', 'error')
+      showNotification(`插件安裝失敗：${e?.message || e}`, 'error')
     } finally {
       setLoading(false)
     }
@@ -595,15 +618,18 @@ export default function App() {
   const reloadOfficialPlugin = async () => {
     setReloadingPlugin(true)
     try {
-      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL)
+      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL, true)
       pluginManager.removePlugin(OFFICIAL_PLUGIN_NAME)
-      loadPluginCode(OFFICIAL_PLUGIN_NAME, code)
+      loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
       writeCachedPlugin(OFFICIAL_PLUGIN_NAME, code)
       setPluginToggles(prev => ({ ...prev, [OFFICIAL_PLUGIN_NAME]: true }))
       setPluginKey(k => k + 1)
       setPluginError(null)
       pluginInitError = null
-      showNotification(`已從 URL 重新載入 ${OFFICIAL_PLUGIN_NAME}`, 'success')
+      // 帶上版本，使用者才看得出到底有沒有真的換版（先前只說「成功」，
+      // 抓回舊碼時完全看不出來）
+      const version = pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version || '?'
+      showNotification(`已重新載入 ${OFFICIAL_PLUGIN_NAME} v${version}`, 'success')
     } catch (e: any) {
       const msg = `重新載入失敗：${e?.message || e}`
       setPluginError(msg)
@@ -1020,25 +1046,28 @@ export default function App() {
                 <div className="space-y-2">
                   <input
                     type="text"
-                    value={pluginName}
-                    onChange={(e) => setPluginName(e.currentTarget.value)}
-                    placeholder="插件名稱"
+                    value={pluginUrl}
+                    onChange={(e) => setPluginUrl(e.currentTarget.value)}
+                    placeholder="插件 URL（例：https://raw.githubusercontent.com/.../index.js）"
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white outline-none"
                   />
                   <input
                     type="text"
-                    value={pluginUrl}
-                    onChange={(e) => setPluginUrl(e.currentTarget.value)}
-                    placeholder="插件 URL"
+                    value={pluginName}
+                    onChange={(e) => setPluginName(e.currentTarget.value)}
+                    placeholder="插件名稱（選填，留空則用插件自己宣告的名稱）"
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white outline-none"
                   />
                   <button
                     onClick={installPluginFromURL}
-                    disabled={loading}
+                    disabled={loading || !pluginUrl.trim()}
                     className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition disabled:opacity-50"
                   >
                     {loading ? '安裝中...' : '安裝插件'}
                   </button>
+                  <div className="text-xs text-gray-500">
+                    插件由本站後端代抓，不需你的網路連得到託管站。
+                  </div>
                 </div>
               </div>
             </div>

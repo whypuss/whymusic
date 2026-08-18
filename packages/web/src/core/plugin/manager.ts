@@ -9,15 +9,35 @@ export class PluginManager {
   private plugins: Plugin[] = []
   private enabled: Set<string> = new Set()
 
-  loadPlugin(code: string, name?: string): void {
+  /**
+   * 載入插件並回傳實際註冊的名稱。
+   *
+   * 名稱優先採用插件自己宣告的 platform（MusicFree 插件宣告的是 platform
+   * 而非 name），呼叫端傳入的 name 只當後備。這樣使用者從 URL 安裝時不必
+   * 手填名稱，也避免手填值與插件回傳 item.platform 不一致導致搜尋派發失敗。
+   * 回傳名稱是必要的：註冊名可能與傳入的 name 不同，啟用時要用實際的那個。
+   */
+  loadPlugin(code: string, name?: string): string {
     const plugin = PluginRunner.load(code)
+    const resolvedName = plugin.name || plugin.platform || name || 'Unknown'
     const enhancedPlugin: Plugin = {
       ...plugin,
-      name: plugin.name || name || 'Unknown',
-      platform: plugin.platform || name || 'unknown',
+      name: resolvedName,
+      platform: plugin.platform || resolvedName,
     }
-    this.plugins.push(enhancedPlugin)
+    // 同名視為重裝/升級：換掉舊的那份，不要並存。
+    // 否則 getEnabledPlugins() 會回兩份同一個插件，搜尋跑兩次、結果整批重複，
+    // 而 getPlugin() 用 find 只看到第一份，版號也永遠顯示舊的。
+    const existing = this.plugins.findIndex(
+      p => p.name === resolvedName || p.platform === enhancedPlugin.platform,
+    )
+    if (existing >= 0) {
+      this.plugins[existing] = enhancedPlugin
+    } else {
+      this.plugins.push(enhancedPlugin)
+    }
     this.enabled.add(enhancedPlugin.name)
+    return resolvedName
   }
 
   async loadFromURL(url: string, name?: string): Promise<void> {
