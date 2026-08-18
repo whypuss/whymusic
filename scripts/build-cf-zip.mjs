@@ -32,7 +32,7 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
 
 // 1) 打包 worker
 await build({
-  entryPoints: [path.join(WEB, 'functions/_worker-entry.js')],
+  entryPoints: [path.join(WEB, 'worker/index.js')],
   outfile: path.join(STAGE, '_worker.js'),
   bundle: true,
   format: 'esm',

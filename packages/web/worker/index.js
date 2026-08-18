@@ -22,7 +22,7 @@ import {
   getAudiomackAlbumOrSheet,
   jsonResponse,
   GD_BITRATE,
-} from './_lib/why.js'
+} from './why.js'
 
 /** 跨域代抓。音源 URL 與第三方插件都靠它，必須保留 Range 以便 seek */
 async function handleProxy(request, url) {

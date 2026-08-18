@@ -61,7 +61,7 @@ export default function ClassicUI({ app, onSwitchUi }: { app: MusicApp; onSwitch
   } = app
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-800 to-indigo-900 text-white" style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className="bg-gradient-to-br from-sky-800 to-indigo-900 text-white" style={{ height: 'var(--app-height, 100vh)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       {/* Notification */}
       {notification && (
         <div
@@ -100,7 +100,7 @@ export default function ClassicUI({ app, onSwitchUi }: { app: MusicApp; onSwitch
 
       {/* Header */}
       <div className="h-16 px-4 md:px-6 flex items-center justify-between border-b border-gray-800">
-        <h1 className="text-xl font-bold">MusicFree Web</h1>
+        <h1 className="text-xl font-bold">WhyMusic</h1>
       </div>
 
       {/* Main Content */}

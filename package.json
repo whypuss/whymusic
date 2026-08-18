@@ -9,7 +9,7 @@
     "dev": "pnpm --filter @musicfree/web dev",
     "build": "pnpm --filter @musicfree/web build",
     "typecheck": "pnpm --filter @musicfree/core typecheck && pnpm --filter @musicfree/web typecheck",
-    "build:cf": "pnpm build && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/",
+    "build:cf": "pnpm build && node scripts/build-worker.mjs && mkdir -p packages/web/dist/plugins && cp plugins/*.js packages/web/dist/plugins/",
     "build:zip": "pnpm build && node scripts/build-cf-zip.mjs"
   },
   "dependencies": {

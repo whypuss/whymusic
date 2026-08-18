@@ -114,11 +114,23 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
     <div
       className="bg-black text-white flex flex-col"
       style={{
-        height: '100vh',
+        // 用 index.html 定義的 --app-height（dvh，手機才會真正滿版）
+        height: 'var(--app-height, 100vh)',
         overflow: 'hidden',
         fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang TC", "Microsoft JhengHei", sans-serif',
       }}
     >
+      {/* 頂部標題列。毛玻璃 + 安全區內距，內容捲動時仍可見 */}
+      <header
+        className="flex-shrink-0 border-b border-white/[0.08] bg-black/70 backdrop-blur-xl"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
+        <div className="max-w-2xl mx-auto px-4 h-11 flex items-center gap-2">
+          <span className="w-[22px] h-[22px] rounded-[6px] bg-[#0A84FF] flex items-center justify-center
+                           text-[13px] font-bold text-white">W</span>
+          <span className="text-[16px] font-semibold tracking-tight">WhyMusic</span>
+        </div>
+      </header>
       {/* 通知：iOS 風格的浮動膠囊 */}
       {notification && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-[14px]
@@ -433,7 +445,10 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
       </div>
 
       {/* ── 播放器：毛玻璃底欄 ── */}
-      <div className="border-t border-white/[0.08] bg-[#1C1C1E]/80 backdrop-blur-2xl">
+      <div
+        className="flex-shrink-0 border-t border-white/[0.08] bg-[#1C1C1E]/80 backdrop-blur-2xl"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
         <div className="max-w-2xl mx-auto px-4 pt-3 pb-2">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-[8px] bg-white/10 flex-shrink-0 overflow-hidden

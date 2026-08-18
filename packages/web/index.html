@@ -1,12 +1,44 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MusicFree Web</title>
+    <!--
+      viewport-fit=cover：讓版面延伸到 iPhone 的圓角/劉海區，配合 CSS 的
+      env(safe-area-inset-*) 才能真正填滿手機螢幕。
+      maximum-scale=1 + user-scalable=no：避免點輸入框時 iOS Safari 自動放大，
+      放大後版面會被推歪。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>WhyMusic</title>
     <!-- crypto-js 必須預載入，MusicFree 插件依賴其同步 API -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+    <style>
+      /*
+        手機瀏覽器的 100vh 含網址欄高度，實際可見區更矮，版面底部會被裁掉。
+        dvh 是「動態視窗高度」，會隨網址欄收合改變，才是手機上正確的滿版。
+        用 CSS 變數讓不支援 dvh 的舊瀏覽器仍退回 vh。
+      */
+      :root { --app-height: 100vh; }
+      @supports (height: 100dvh) {
+        :root { --app-height: 100dvh; }
+      }
+      html, body, #root {
+        height: var(--app-height);
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        /* 過度滑動時露出的底色，避免出現白邊 */
+        background: #000;
+        -webkit-font-smoothing: antialiased;
+        /* 關掉 iOS 點擊時的灰色高亮塊 */
+        -webkit-tap-highlight-color: transparent;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
