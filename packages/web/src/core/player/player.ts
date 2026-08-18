@@ -264,9 +264,20 @@ export class Player {
     return this.audio.duration
   }
 
-  /** 取得是否正在播放 */
+  /**
+   * 是否正在播放。
+   *
+   * 刻意不看 readyState —— 「正在緩衝」仍然是正在播放。原本這裡要求
+   * readyState > 2，於是剛換到還沒緩衝好的新音源時會回 false，UI 就顯示成暫停，
+   * 明明聲音在放（實測在 Android 上重現：時間在跑但按鈕是播放三角）。
+   */
   get isPlaying(): boolean {
-    return !this.audio.paused && !this.audio.ended && this.audio.readyState > 2
+    return !this.audio.paused && !this.audio.ended
+  }
+
+  /** 目前是否暫停。給呼叫端在 toggle 前判斷「這一下是要播還是要停」 */
+  get paused(): boolean {
+    return this.audio.paused
   }
 
   /** 取得音量。注意 iOS 上這個值改不動，Apple 規定只能用實體按鍵控制 */

@@ -272,8 +272,12 @@ export function useMusicApp() {
   /**
    * 預取好的下一首播放位址。換歌時若命中就省掉一次網路解析 ——
    * 手機在背景時網路請求最容易失敗，少一步就少一個中斷點。
+   *
+   * index 必須一起記下來：隨機模式的 pickNextIndex 每次呼叫結果都不同，播完再挑
+   * 一次會挑到另一首歌，於是預取的位址與預載進閒置元素的音訊全部作廢（實測推薦頁
+   * 幾乎每次都不命中）。而預載是 iOS 鎖屏換歌唯一穩的路徑，不命中就等於沒修。
    */
-  const prefetchRef = useRef<{ key: string; url: string; source?: string } | null>(null)
+  const prefetchRef = useRef<{ key: string; url: string; source?: string; index: number } | null>(null)
   /**
    * 實際播放過的曲目堆疊（不含當前這首）。
    * 「上一首」不能用 index-1 —— 隨機模式下清單索引與播放順序無關，
@@ -331,7 +335,13 @@ export function useMusicApp() {
     if (playMode !== 'auto') return
 
     const q = queueRef.current
-    const nextIdx = pickNextIndex(q, new Set())
+    // 用預取時挑好的那一首，不要重新挑。隨機模式下重挑會挑到另一首歌，
+    // 預取的位址與預載進閒置元素的音訊就全白做了 —— 而預載是背景換歌唯一穩的路徑。
+    // 佇列可能在這期間被換掉（使用者去搜尋了），所以要驗證那個索引還是同一首歌。
+    const pre = prefetchRef.current
+    const nextIdx = pre && q.list[pre.index] && queueKey(q.list[pre.index]) === pre.key
+      ? pre.index
+      : pickNextIndex(q, new Set())
     if (nextIdx < 0) return
     // auto: true —— 下一首若也放不出來，play() 會自己繼續往後跳
     play(q.list[nextIdx], { ...q, index: nextIdx }, { auto: true })
@@ -407,11 +417,19 @@ export function useMusicApp() {
     seek: (t: number) => { player.seekTo(t); setCurrentTime(t) },
   }
 
+  /**
+   * 註冊系統控制項（鎖定畫面／通知欄的上一首、播放、下一首）。
+   *
+   * 依賴 playingItem 而不是只在掛載時註冊一次：系統的「現在播放」工作階段是在
+   * 播放真正開始時才建立的，而掛載時還沒有任何曲目。換歌時也可能重建（雙元素輪替
+   * 會換掉發聲的元素）。重新註冊是無副作用的，而少了 previoustrack/nexttrack 的
+   * handler，鎖定畫面上就不會出現那兩顆箭頭按鈕 —— 寧可多註冊幾次。
+   *
+   * handler 內容仍透過 mediaActionsRef 轉發，所以呼叫到的永遠是最新的閉包。
+   */
   useEffect(() => {
     const ms = navigator.mediaSession
     if (!ms?.setActionHandler) return
-    const a = mediaActionsRef.current
-    // 包一層 ref 轉發：註冊只做一次，但呼叫到的永遠是最新的閉包
     ms.setActionHandler('play', () => mediaActionsRef.current.play())
     ms.setActionHandler('pause', () => mediaActionsRef.current.pause())
     ms.setActionHandler('nexttrack', () => mediaActionsRef.current.next())
@@ -419,11 +437,15 @@ export function useMusicApp() {
     ms.setActionHandler('seekto', (d: any) => {
       if (typeof d?.seekTime === 'number') mediaActionsRef.current.seek(d.seekTime)
     })
-    void a
-    return () => {
-      for (const action of ['play', 'pause', 'nexttrack', 'previoustrack', 'seekto'] as const) {
-        try { ms.setActionHandler(action, null) } catch { /* 忽略不支援的動作 */ }
-      }
+  }, [playingItem])
+
+  // 頁面真正卸載時才清掉 handler。放在換歌的那個 effect 裡會製造一段沒有 handler
+  // 的空窗，鎖定畫面的按鈕會閃掉。
+  useEffect(() => () => {
+    const ms = navigator.mediaSession
+    if (!ms?.setActionHandler) return
+    for (const action of ['play', 'pause', 'nexttrack', 'previoustrack', 'seekto'] as const) {
+      try { ms.setActionHandler(action, null) } catch { /* 忽略不支援的動作 */ }
     }
   }, [])
 
@@ -587,7 +609,7 @@ export function useMusicApp() {
       if (!plugin) return
       const media = await pluginManager.getMediaSource(plugin, next)
       if (media?.url) {
-        prefetchRef.current = { key, url: media.url, source: media.source }
+        prefetchRef.current = { key, url: media.url, source: media.source, index: nextIdx }
         // 光是拿到 URL 還不夠 —— 還要把它載進播放器閒置的那個 audio 元素。
         // 鎖屏換歌時只對已載好的元素呼叫 play()，不動 src 也不碰網路，
         // 這是 iOS 背景續播唯一穩的做法（詳見 player.ts 開頭）
@@ -714,8 +736,11 @@ export function useMusicApp() {
   }
 
   const togglePlay = () => {
+    // 先問「現在是暫停嗎」，再 toggle。不能 toggle 完才讀狀態：play() 是非同步的，
+    // 剛換到還沒緩衝好的音源時當下讀到的還不是最終狀態，按鈕就會顯示錯。
+    const willPlay = player.paused
     player.toggle()
-    setIsPlaying(player.isPlaying)
+    setIsPlaying(willPlay)
   }
 
   /** 下一首。鎖定畫面／耳機按鈕會呼叫，UI 也可用 */
