@@ -6,11 +6,11 @@
  * 以留白和層次取代邊框。深色底以 iOS 的近黑（#000 / #1C1C1E）為基調，
  * 不用漸層 —— 平面風的重點是乾淨，不是華麗。
  */
+import { useMemo } from 'react'
 import { MusicItem } from './../core'
 import {
   MusicApp,
   pluginManager,
-  OFFICIAL_PLUGIN_NAME,
   OFFICIAL_PLUGIN_URL,
   PLAY_MODE_ICON,
   PLAY_MODE_LABEL,
@@ -91,14 +91,14 @@ function EmptyState({ text }: { text: string }) {
   return <div className="px-6 py-16 text-center text-[15px] text-white/35">{text}</div>
 }
 
-export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi: () => void }) {
+export default function AppleUI({ app }: { app: MusicApp }) {
   const {
     albumDetail, albumLoading, albumTracks, currentTime, currentView, cyclePlayMode, duration,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
-    hasMore, installOfficialPlugin, installPluginFromURL, isPlaying, keyword, loadMore, loading,
-    loadingMore, lockedItem, notification, officialInstalled, play, playMode, playingItem,
-    pluginError, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
-    recommendSongs, recommendUnsupported, reloadingPlugin, removePlugin, results, search,
+    hasMore, installPluginFromURL, isPlaying, keyword, loadMore, loading,
+    loadingMore, lockedItem, notification, play, playMode, playingItem,
+    pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
+    recommendSongs, recommendUnsupported, removePlugin, results, search,
     searchType, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setSearchPage, setSearchType, switchRecommendMode, togglePlay, togglePlugin,
   } = app
@@ -109,6 +109,9 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
     { key: 'search' as const, label: '搜尋' },
     { key: 'plugins' as const, label: '音源' },
   ]
+  // 內建與第三方音源不再分開列 —— 安裝方式統一成貼網址，區分它們沒有意義了。
+  // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
+  const installedPlugins = useMemo(() => pluginManager.getPlugins(), [pluginKey])
 
   return (
     <div
@@ -329,119 +332,83 @@ export default function AppleUI({ app, onSwitchUi }: { app: MusicApp; onSwitchUi
                   <div className="text-[14px] text-[#FF453A]">{pluginError}</div>
                 </div>
               )}
-              {!officialInstalled && !pluginError && (
+              {installedPlugins.length === 0 && !pluginError && (
                 <div className="mt-5 p-3.5 rounded-[12px] bg-[#0A84FF]/15 border border-[#0A84FF]/25">
                   <div className="text-[14px] font-medium text-[#0A84FF]">尚未安裝音源</div>
                   <div className="text-[13px] text-white/55 mt-0.5 leading-relaxed">
-                    安裝後即可搜尋與播放。
+                    在下方貼上音源網址並安裝，之後即可搜尋與播放。
                   </div>
                 </div>
               )}
 
-              <div className="mt-5 rounded-[14px] bg-white/[0.07] overflow-hidden">
-                <div className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[17px] font-semibold">{OFFICIAL_PLUGIN_NAME}</div>
-                      <div className="text-[13px] text-white/45 mt-0.5">
-                        {officialInstalled
-                          ? `v${pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version || '?'}`
-                          : '未安裝'}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button onClick={installOfficialPlugin} disabled={reloadingPlugin}
-                        className="px-3.5 py-1.5 rounded-full bg-[#0A84FF] text-[13px] font-medium
-                                   disabled:opacity-40 active:opacity-70 transition">
-                        {reloadingPlugin ? '處理中…' : officialInstalled ? '更新' : '安裝'}
-                      </button>
-                      {officialInstalled && (
-                        <>
-                          <button onClick={() => togglePlugin(OFFICIAL_PLUGIN_NAME)}
-                            className={`px-3.5 py-1.5 rounded-full text-[13px] font-medium transition ${
-                              pluginToggles[OFFICIAL_PLUGIN_NAME] !== false
-                                ? 'bg-[#30D158] text-black' : 'bg-white/15 text-white/70'
-                            }`}>
-                            {pluginToggles[OFFICIAL_PLUGIN_NAME] !== false ? '已啟用' : '已停用'}
-                          </button>
-                          <button onClick={() => removePlugin(OFFICIAL_PLUGIN_NAME)}
-                            className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A]
-                                       text-[13px] font-medium active:opacity-70 transition">
-                            移除
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-white/25 mt-3 break-all">來源：{OFFICIAL_PLUGIN_URL}</div>
-                </div>
-              </div>
-
-              <div className="mt-6">
+              {/* 從網址安裝 —— 唯一的安裝方式 */}
+              <div className="mt-5">
                 <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
-                  第三方音源
-                </div>
-                <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
-                  {pluginManager.getPlugins()
-                    .filter(p => p.name !== OFFICIAL_PLUGIN_NAME)
-                    .map(p => (
-                      <div key={p.name} className="p-4 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[15px] font-medium truncate">{p.name}</div>
-                          <div className="text-[13px] text-white/45">v{p.version}</div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => togglePlugin(p.name)}
-                            className={`px-3.5 py-1.5 rounded-full text-[13px] font-medium ${
-                              pluginToggles[p.name] !== false
-                                ? 'bg-[#30D158] text-black' : 'bg-white/15 text-white/70'
-                            }`}>
-                            {pluginToggles[p.name] !== false ? '已啟用' : '已停用'}
-                          </button>
-                          <button onClick={() => removePlugin(p.name)}
-                            className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A] text-[13px]">
-                            移除
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  {pluginManager.getPlugins().filter(p => p.name !== OFFICIAL_PLUGIN_NAME).length === 0 && (
-                    <div className="px-4 py-6 text-center text-[14px] text-white/30">尚無第三方音源</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
-                  從網址新增
+                  從網址安裝
                 </div>
                 <div className="rounded-[14px] bg-white/[0.07] p-4 space-y-2.5">
                   <input value={pluginUrl} onChange={e => setPluginUrl(e.currentTarget.value)}
-                    placeholder="插件網址"
+                    placeholder="音源網址"
                     className="w-full px-3 py-2.5 bg-black/30 rounded-[10px] text-[15px]
                                placeholder:text-white/30 outline-none focus:bg-black/50 transition" />
                   <input value={pluginName} onChange={e => setPluginName(e.currentTarget.value)}
-                    placeholder="名稱（選填，留空則用插件自報的名稱）"
+                    placeholder="名稱（選填，留空則用音源自報的名稱）"
                     className="w-full px-3 py-2.5 bg-black/30 rounded-[10px] text-[15px]
                                placeholder:text-white/30 outline-none focus:bg-black/50 transition" />
                   <button onClick={installPluginFromURL} disabled={loading || !pluginUrl.trim()}
                     className="w-full py-2.5 rounded-[10px] bg-[#0A84FF] text-[15px] font-medium
                                disabled:opacity-40 active:opacity-70 transition">
-                    {loading ? '安裝中…' : '從網址安裝'}
+                    {loading ? '安裝中…' : '安裝'}
                   </button>
                   <div className="text-[12px] text-white/30 leading-relaxed">
                     {pluginUrl.trim()
                       ? '由本站後端代抓，你的網路不必連得到託管站。'
-                      : '先填入插件網址才能安裝。'}
+                      : '先填入音源網址才能安裝。'}
                   </div>
+                  {/*
+                    內建音源的網址列在這裡（可點擊填入），而不是做成一顆安裝按鈕。
+                    否則清掉瀏覽器資料後沒人知道該貼什麼，等於死路。
+                  */}
+                  <button onClick={() => setPluginUrl(OFFICIAL_PLUGIN_URL)}
+                    className="text-[12px] text-[#0A84FF] active:opacity-60 break-all text-left">
+                    內建音源：{OFFICIAL_PLUGIN_URL}
+                  </button>
                 </div>
               </div>
 
-              <button onClick={onSwitchUi}
-                className="mt-8 w-full py-2.5 rounded-[12px] bg-white/[0.07] text-[14px]
-                           text-white/50 active:opacity-70 transition">
-                切換至舊版介面
-              </button>
+              {/* 已安裝的音源 */}
+              <div className="mt-6">
+                <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                  已安裝
+                </div>
+                <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
+                  {installedPlugins.map(p => (
+                    <div key={p.name} className="p-4 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[15px] font-medium truncate">{p.name}</div>
+                        <div className="text-[13px] text-white/45">v{p.version || '?'}</div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={() => togglePlugin(p.name)}
+                          className={`px-3.5 py-1.5 rounded-full text-[13px] font-medium transition ${
+                            pluginToggles[p.name] !== false
+                              ? 'bg-[#30D158] text-black' : 'bg-white/15 text-white/70'
+                          }`}>
+                          {pluginToggles[p.name] !== false ? '已啟用' : '已停用'}
+                        </button>
+                        <button onClick={() => removePlugin(p.name)}
+                          className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A]
+                                     text-[13px] font-medium active:opacity-70 transition">
+                          移除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {installedPlugins.length === 0 && (
+                    <div className="px-4 py-6 text-center text-[14px] text-white/30">尚無音源</div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

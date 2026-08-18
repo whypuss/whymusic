@@ -24,7 +24,10 @@ export default function App() {
     setUi(next)
   }
 
+  // 新 UI 沒有切換按鈕（使用者確認不需要），但舊 UI 留著「切換至新版」的出口，
+  // 免得曾經切過去的人被鎖在舊介面裡。要回舊版可設 localStorage 的
+  // musicfree-ui = classic。
   return ui === 'classic'
     ? <ClassicUI app={app} onSwitchUi={() => switchUi('apple')} />
-    : <AppleUI app={app} onSwitchUi={() => switchUi('classic')} />
+    : <AppleUI app={app} />
 }
