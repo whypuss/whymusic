@@ -1,74 +1,62 @@
-# MusicFree Web 部署指南
+# WhyMusic 部署指南
 
-> 用浏览器搜尋和播放音樂。支援 Audiomack、YouTube、猫耳FM 等多個音源。
-> 基於開源專案 [MusicFree](https://github.com/maotoumao/MusicFree) 的插件系統。
-
----
-
-## 先看這個：兩種部署方式，揀一個
-
-| | **方案 A：Cloudflare Pages** | **方案 B：VPS / 自建伺服器** |
-|---|---|---|
-| 費用 | **免費** | 一臺 VPS（$3-5/月） |
-| 音源 | ✅ WhyMusic（netease / joox / audiomack） | ✅ 同左 |
-| 插件系統 | ✅ 支援貼網址安裝第三方插件 | ✅ 同左 |
-| 難易度 | 簡單（一條命令） | 中等（要配 nginx） |
-| 設定方式 | 改 `packages/web/worker/why.js` 的常數 | 用環境變數 |
-| 上游快取 | 只在單一 isolate 內 | 全站共用 |
-
-> 兩者功能已經對齊 —— CF Pages 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了。
-> **建議先用 Cloudflare Pages**：免費、不用管伺服器。需要全站共用快取或想用環境變數
-> 調整設定，再考慮 VPS。
+> 用瀏覽器搜尋、播放、下載音樂。基於 [MusicFree](https://github.com/maotoumao/MusicFree) 的插件系統。
+> 專案說明見 [README.md](README.md)。
 
 ---
 
-## 方式一：Cloudflare Pages（推薦新手）
+## 先選一種
 
-### 你需要
+| | **A：Cloudflare Pages** | **B：拖拉 zip** | **C：VPS 自建** |
+|---|---|---|---|
+| 費用 | 免費 | 免費 | 一臺 VPS |
+| 需要裝工具 | Node + pnpm + wrangler | **不需要** | Node + nginx |
+| 功能 | 完整 | 完整 | 完整 |
+| 更新方式 | `pnpm deploy:cf` | 重新上傳 zip | `git pull` + 重啟 |
+| 設定方式 | 改 `packages/web/worker/why.js` 常數 | 同 A | 環境變數 |
+| 上游快取 | 只在單一 isolate 內 | 同 A | 全站共用 |
 
-- 一個 Cloudflare 帳號（[註冊](https://dash.cloudflare.com/sign-up)）
-- 一臺電腦（Mac / Windows / Linux 都行）
-- 會用終端機（Terminal / PowerShell）
+三種方式功能相同 —— CF 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了，
+Audiomack 的 OAuth 簽名改用 Web Crypto（Workers 沒有 `node:crypto`）。
 
-### 第一步：準備工具（3 分鐘）
+> **不需要任何金鑰或環境變數。** 音源走公開 API，Audiomack 用的是公開示例金鑰。
+
+**所有方式部署完成後，都要先到「音源」頁安裝音源** —— app 出廠不帶音源，
+不裝就搜不到也播不了。網址是 `/plugins/whymusic.js`，該頁點一下會自動填入。
+
+---
+
+## 方式 A：Cloudflare Pages
+
+### 1. 準備
 
 ```bash
-# 安裝 Node.js（如果還沒有）
-# 去 https://nodejs.org 下載 LTS 版本
-
-# 安裝 pnpm 和 wrangler
 npm install -g pnpm wrangler
-```
-
-### 第二步：克隆程式碼
-
-```bash
 git clone https://github.com/whypuss/musicweb.git
 cd musicweb
 pnpm install
-```
-
-### 第三步：設定 Cloudflare
-
-```bash
-# 用瀏覽器登入你的 Cloudflare 帳號
 wrangler login
 ```
 
-### 第四步：部署
+### 2. 建立專案（只需一次）
+
+到 Cloudflare 儀表板 → Workers & Pages → Create → Pages → **Upload assets**，
+取一個名字（例如 `whymusicweb`），隨便上傳一次空內容建立專案即可。
+
+然後把 `package.json` 裡 `deploy:cf` 的 `--project-name=whymusicweb` 改成你的名字。
+
+### 3. 部署
 
 ```bash
 pnpm deploy:cf
 ```
 
-這一個指令會做完三件事：build 前端、把 API 打包成 `dist/_worker.js`、
-把音源插件複製進 `dist/plugins/`，然後上傳。
-專案名稱寫在 `deploy:cf` 裡（預設 `whymusicweb`），改成你自己的即可。
+這一個指令做完四件事：編譯前端 → 把 API 打包成 `dist/_worker.js` →
+把音源插件複製進 `dist/plugins/` → 上傳。
 
-部署成功後會得到 `https://<專案名>.pages.dev`。開啟後先到「音源」頁按「安裝」，
-才能搜尋與播放 —— app 預設不附音源。
+完成後開啟 `https://<專案名>.pages.dev`。
 
-### 之後更新程式碼
+### 之後更新
 
 ```bash
 git pull
@@ -76,264 +64,248 @@ pnpm deploy:cf
 ```
 
 > **為什麼不是 push 就自動部署**：用 wrangler 建立的專案屬於 Direct Upload，
-> Cloudflare 不允許事後改接 Git（官方文件明載這是單向選擇）。要 push 自動部署
-> 得在儀表板另建一個 Git 連動的專案，並把建置指令設成 `pnpm build:cf`、
-> 輸出目錄設成 `packages/web/dist`。
+> Cloudflare 不允許事後改接 Git（官方文件明載這是單向選擇）。
 >
-> 若用 Git 連動，務必用 `build:cf` 而不是 `build`：後者不會產生 `_worker.js`
-> 也不會複製 `plugins/`，結果所有 `/api/*` 會落到 SPA fallback 回 index.html，
-> 整站搜不到也播不了。
+> 要 push 自動部署，得在儀表板另建一個 **Git 連動**的專案，並且：
+> - 建置指令設成 **`pnpm build:cf`**（不是 `pnpm build`）
+> - 輸出目錄設成 **`packages/web/dist`**
+>
+> 用 `pnpm build` 會踩到一個很難查的坑：它不產生 `_worker.js` 也不複製
+> `plugins/`，結果所有 `/api/*` 會落到 SPA fallback 回 index.html，
+> 整站搜不到也播不了 —— 但首頁看起來完全正常。
 
 ---
 
-## 方式二：VPS / 自建伺服器（完整功能）
+## 方式 B：打包 zip 給別人上傳
 
-### 你需要
-
-- 一臺 Linux 伺服器（VPS），推薦 Ubuntu 22.04 / 20.04
-- SSH 登入權限
-- 一個域名（可选，但建議有——用 HTTPS）
-
-### 第一步：伺服器基本準備
-
-SSH 登入你的 VPS：
+適合要把站交給不會用命令列的人。
 
 ```bash
-ssh root@你的伺服器IP
+pnpm install
+pnpm build:zip      # → dist-cf/musicweb-cf.zip（約 0.45 MiB，12 個檔）
 ```
 
-然後安裝基本工具：
+把 zip 交給對方，他只要：
+
+1. Cloudflare 儀表板 → Workers & Pages → Create → Pages
+2. 選 **Upload assets**（Direct Upload），取個專案名
+3. 把 zip **整包拖進去**（不用解壓）
+4. 開啟 `<專案名>.pages.dev`，到「音源」頁安裝音源
+
+zip 內已附 `README.txt` 說明。
+
+> **為什麼要打包成單一 `_worker.js`**：儀表板的拖拉／zip 上傳**不會編譯
+> `functions/` 目錄**（官方文件明載那條路必須用 wrangler），但單一 `_worker.js`
+> 兩種方式都支援。所以整個專案的後端就統一成一個 `_worker.js`，Git 建置、
+> wrangler、zip 三條路走同一份程式碼。
+>
+> 拖拉上傳的限制：單檔 25 MiB、檔案數 1000 —— 本包遠低於此。
+
+---
+
+## 方式 C：VPS / 自建伺服器
+
+後端 `packages/web/scripts/server.mjs` **零外部依賴**（只用 Node 內建模組），
+同時服務前端靜態檔與 API，預設監聽 `:8788`。
+
+### 1. 伺服器準備
 
 ```bash
-# 更新系統
-apt update && apt upgrade -y
-
-# 安裝 Node.js 20
+# Node 20+（Alpine 用 apk add nodejs npm）
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt install -y nodejs
-
-# 安裝 pnpm 和 nginx
+apt install -y nodejs nginx
 npm install -g pnpm
-apt install -y nginx
-
-# 確認安裝成功
-node -v        # 應該顯示 v20.x
-pnpm -v        # 應該顯示 8.x 或更高
-nginx -v       # 應該顯示 nginx 版本
 ```
 
-### 第二步：準備程式碼
+### 2. 取得程式碼並編譯
 
 ```bash
-# 建立目錄並克隆
-mkdir -p /var/www
-cd /var/www
+mkdir -p /var/www && cd /var/www
 git clone https://github.com/whypuss/musicweb.git musicweb
 cd musicweb
-
-# 安裝依賴並編譯
 pnpm install
 pnpm build
 ```
 
-編譯完成後，前端檔案在 `packages/web/dist/`。
+> **若是從本機上傳而非在機器上 clone，三樣都要傳：**
+> - `packages/web/dist/`（前端）
+> - `packages/web/scripts/server.mjs`（後端）
+> - **`plugins/`（音源插件）**
+>
+> 少了 `plugins/` 的話 `/plugins/whymusic.js` 會回 404，音源裝不起來，
+> 整站不能搜尋或播放。插件目錄預設是 repo 根層的 `plugins/`，可用
+> `PLUGINS_DIR` 覆寫。
 
-> 若不是在機器上直接 clone，而是從本機上傳檔案，記得三樣都要傳：
-> `packages/web/dist/`（前端）、`packages/web/scripts/server.mjs`（後端）、
-> 以及 **`plugins/`（音源插件）**。少了 `plugins/` 的話後端會在
-> `/plugins/whymusic.js` 回 404，前端就載不到音源、整站不能搜尋或播放。
-> 插件目錄預設是 repo 根層的 `plugins/`，可用 `PLUGINS_DIR` 覆寫。
-
-### 第三步：設定環境變數
-
-```bash
-# 建立環境變數檔案（別人看不到）
-sudo nano /etc/musicweb.env
-```
-
-輸入以下內容，然後按 `Ctrl+O` 儲存、`Ctrl+X` 離開：
-
-```
-AUDIOMACK_SEARCH_CONSUMER_KEY=audiomack-js
-AUDIOMACK_SEARCH_SECRET=f3ac5b086f3eab260520d8e3049561e6
-AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-js
-AUDIOMACK_MEDIA_SECRET=f3ac5b086f3eab260520d8e3049561e6
-```
-
-> 以上是 Audiomack 官方公開的 consumer key/secret（MusicFree 原版插件同款），可直接使用。如果想用自己的 Audiomack App 憑證，覆蓋即可。
-
-設定檔案權限（防止其他人讀取）：
+### 3. 環境變數（全部可選）
 
 ```bash
-sudo chmod 600 /etc/musicweb.env
+sudo nano /etc/whymusic.env
+sudo chmod 600 /etc/whymusic.env
 ```
 
-### 第四步：建立系統服務（讓程式自動運行）
+| 變數 | 預設 | 說明 |
+|------|------|------|
+| `PORT` | `8788` | 監聽埠 |
+| `PLUGINS_DIR` | repo 的 `plugins/` | 音源插件目錄 |
+| `WHY_MUSIC_SOURCES` | `netease,joox,audiomack` | 啟用的子音源 |
+| `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子源適用） |
+| `GD_API_URL` | `https://music-api.gdstudio.xyz/api.php` | GD 上游位址 |
+| `AUDIOMACK_SEARCH_CONSUMER_KEY` / `_SECRET` | `audiomack-js` / 公開值 | Audiomack 搜尋 |
+| `AUDIOMACK_MEDIA_CONSUMER_KEY` / `_SECRET` | 同上 | Audiomack 音源 |
 
-建立服務檔案：
+⚠️ **Audiomack 的 key 與 secret 必須成對。** 曾經踩過：`AUDIOMACK_MEDIA_CONSUMER_KEY`
+被設成 `audiomack-web` 但 secret 仍是 `audiomack-js` 的，簽名一律失敗並回
+`1003 Invalid signature` —— 而搜尋照常運作，只有播放壞掉，很難聯想到是設定問題。
+不確定就整組不要設，用預設值。
 
-```bash
-sudo nano /etc/systemd/system/musicweb.service
-```
+完整範例見 [.env.example](.env.example)。
 
-複製貼上以下內容：
+### 4. 系統服務
+
+**systemd（Ubuntu / Debian）**
 
 ```ini
+# /etc/systemd/system/whymusic.service
 [Unit]
-Description=MusicFree Web Server
+Description=WhyMusic Server
 After=network.target
 
 [Service]
 Type=simple
-User=www-data
 WorkingDirectory=/var/www/musicweb/packages/web
 ExecStart=/usr/bin/node scripts/server.mjs
 Restart=always
 RestartSec=5
-EnvironmentFile=/etc/musicweb.env
+EnvironmentFile=-/etc/whymusic.env
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-啟動服務：
-
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now musicweb
-sudo systemctl status musicweb
+sudo systemctl enable --now whymusic
+sudo systemctl status whymusic
 ```
 
-看到 `active (running)` 就成功了！
+**OpenRC（Alpine）**
 
-> 伺服器現在監聽 **`http://你的IP:8788`**。先不用管，下面配 nginx 會幫你改成正常端口。
+```sh
+#!/sbin/openrc-run
+name="WhyMusic"
+command="/usr/bin/node"
+command_args="packages/web/scripts/server.mjs"
+command_background="true"
+directory="/var/www/musicweb"
+pidfile="/run/whymusic.pid"
+output_log="/var/log/whymusic.log"
+error_log="/var/log/whymusic.log"
 
-### 第五步：設定 Nginx（HTTPS + 反向代理）
+export PORT=8788
 
-如果有域名，先把域名指向你的伺服器 IP（在域名管理後台加一條 A 記錄）。
-
-建立 Nginx 配置：
-
-```bash
-sudo nano /etc/nginx/sites-available/musicweb
+depend() { need net; }
 ```
 
-複製以下配置（**記得改 `server_name` 為你的域名**）：
+```sh
+chmod +x /etc/init.d/whymusic
+rc-update add whymusic default   # 少了這行重開機不會自動起
+rc-service whymusic start
+```
+
+> OpenRC 沒有 `command_env` 這個變數 —— 要傳環境變數就用 `export`。
+> 曾經踩過：寫成 `command_env="PORT=8443 ..."` 完全沒有生效，PORT 仍是預設值。
+
+### 5. Nginx 反向代理
 
 ```nginx
 server {
-    listen 443 ssl http2;
-    server_name music.yourdomain.com;    # ← 改成你的域名
+    listen 80;
+    server_name music.example.com;
 
-    ssl_certificate     /etc/letsencrypt/live/music.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/music.yourdomain.com/privkey.pem;
+    client_max_body_size 200m;
+    # 音頻串流必須關掉緩衝，否則會播到一半斷
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
 
-    root /var/www/musicweb/packages/web/dist;
-    index index.html;
-
-    # API 請求轉發給後端伺服器
-    location /api/ {
+    location / {
         proxy_pass http://127.0.0.1:8788;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-
-        # 音頻串流需要關閉緩衝
-        proxy_buffering off;
-        proxy_request_buffering off;
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
-
-        # 允許跨域
-        add_header Access-Control-Allow-Origin "*" always;
-        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
-        add_header Access-Control-Allow-Headers "*" always;
-    }
-
-    # 靜態檔案緩存
-    location /assets/ {
-        try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # 前端頁面
-    location / {
-        try_files $uri $uri/ /index.html;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 ```
 
-儲存後啟用：
-
 ```bash
-sudo ln -sf /etc/nginx/sites-available/musicweb /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/whymusic /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 第六步：設定 HTTPS 憑證（免費）
+後端本身就會服務前端靜態檔，所以整站交給它就行，不必另外設 `root`。
+
+### 6. HTTPS
 
 ```bash
-# 安裝 certbot
 apt install -y certbot python3-certbot-nginx
-
-# 申請憑證（會自動修改 nginx 配置）
-sudo certbot --nginx -d music.yourdomain.com
+sudo certbot --nginx -d music.example.com
 ```
-
-按提示輸入 Email，然後選 2（自動重定向 HTTP 到 HTTPS）。
-
-### 完成！
-
-用瀏覽器訪問 `https://music.yourdomain.com`，開始聽歌！
 
 ---
 
 ## 常見問題
 
-**Q: 搜尋沒有結果，或顯示「搜尋需要音源」？**
-A: app 預設不附音源。到「音源」頁按「安裝」即可 —— 那支插件由本站自己供應
-（`/plugins/whymusic.js`），不需要網路連得到 GitHub。
+**Q: 開站後搜尋顯示「搜尋需要音源」？**
+A: 正常 —— app 出廠不帶音源。到「音源」頁，點「內建音源：/plugins/whymusic.js」
+把網址填入，按「安裝」即可。裝過一次會存進 localStorage，之後開啟自動載入。
 
-**Q: 所有 `/api/*` 都回 HTML（搜尋、播放全失效）？**
-A: `_worker.js` 沒有被部署。用 `pnpm build:cf`（不是 `pnpm build`）重新建置 ——
-後者不會產生 `_worker.js`，請求就會落到 SPA fallback 回 index.html。
+**Q: 所有 `/api/*` 都回 HTML，首頁卻正常？**
+A: `_worker.js` 沒被部署（CF）或 API 路由沒生效。CF 版請確認用的是
+`pnpm build:cf` 而非 `pnpm build`。
 
-**Q: 音頻播放到一半斷了？**
-A: 如果是 VPS 部署，檢查 nginx 配置中的 `proxy_buffering off;` 和 `proxy_read_timeout 60s;` 有沒有設定。
+**Q: `/plugins/whymusic.js` 回 404？**
+A: 部署時漏了 `plugins/` 目錄。CF 版用 `build:cf` 會自動複製；自建版要確認
+`plugins/` 有上傳，或用 `PLUGINS_DIR` 指到正確位置。
 
-**Q: Cloudflare Pages 版功能比較少嗎？**
-A: 不會，兩版功能已經對齊。差別只有兩點：CF 版的設定值寫在
-`packages/web/worker/why.js` 的模組常數裡（Workers 沒有 `process.env`）；
-上游回應的 TTL 快取只在單一 isolate 內有效，不像自托管版全站共用。
+**Q: 換版後看到的還是舊介面／舊行為？**
+A: 硬重載一次。API 回應已帶 `Cache-Control: no-store`，前端資源檔名帶內容雜湊，
+理論上不會卡快取；但瀏覽器可能還留著舊的 index.html。
 
-**Q: YouTube 音源能用嗎？**
+**Q: 播放某些歌會失敗？**
+A: 正常。部分曲目在所有子音源都取不到音源（常見於 Audiomack 的授權曲目）。
+自動續播會跳過它繼續；你自己點的那首失敗時會彈窗告知。
+
+**Q: 音頻播到一半斷？**
+A: 自建版檢查 nginx 有沒有 `proxy_buffering off;`。
+
+**Q: 能搜 YouTube 嗎？**
 A: 不能。YouTube 的 player API 現在對所有 client 都要求 PoToken/BotGuard，
-無憑證請求會被擋，兩種部署方式都一樣。程式碼保留了分支，待日後接上即可恢復。
+三種部署方式都一樣。程式碼保留了分支，待日後接上即可恢復。
 
-**Q: 怎麼更新程式碼？**
-A:
+**Q: 怎麼確認線上跑的是哪一版？**
+A: 比對前端資源檔名 —— 那是內容雜湊：
 ```bash
-cd /var/www/musicweb
-git pull
 pnpm build
-sudo systemctl restart musicweb
+ls packages/web/dist/assets/                       # 本地
+curl -s https://你的站/ | grep -o 'assets/index-[^"]*'   # 線上
 ```
-
-**Q: 沒有 Audiomack OAuth 憑證能用嗎？**
-A: 前端頁面能打開，但搜尋和播放 Audiomack 歌曲時會失敗。其他透過後端代理的音源（YouTube 等）也需要各自的憑證。建議至少找到 Audiomack 的 OAuth secret。
+對得上就是同一版。
 
 ---
 
 ## 故障排除速查
 
-| 問題 | 原因 | 解決方法 |
-|------|------|---------|
-| 頁面打不開 | nginx 沒啟動 | `sudo systemctl status nginx` |
-| API 404 | nginx `proxy_pass` 地址錯誤 | 確認是 `http://127.0.0.1:8788` |
-| 搜尋 401 | OAuth 憑證錯誤 | 檢查 `.env` / secrets |
+| 問題 | 原因 | 解決 |
+|------|------|------|
+| 搜尋顯示「需要音源」 | 還沒安裝音源 | 「音源」頁貼 `/plugins/whymusic.js` 安裝 |
+| `/api/*` 回 HTML | `_worker.js` 沒部署 | 用 `pnpm build:cf` 重新部署 |
+| `/plugins/*.js` 404 | 漏傳 `plugins/` | 補上，或設 `PLUGINS_DIR` |
+| 播放回 `1003 Invalid signature` | Audiomack key/secret 不成對 | 整組不設，用預設值 |
 | 播放中斷 | nginx 緩衝沒關 | 加 `proxy_buffering off;` |
-| HTTPS 不通 | SSL 憑證沒設定 | 跑 `certbot --nginx` |
+| 重開機後站掛掉 | 服務沒設開機自啟 | `systemctl enable` / `rc-update add` |
+| 手機版底部被裁掉 | 舊版用 `100vh` | 已改用 `100dvh`，更新到最新版 |
 
 ---
 
