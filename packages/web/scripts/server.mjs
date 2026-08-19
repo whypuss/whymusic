@@ -13,10 +13,14 @@ import { execSync } from 'node:child_process'
 
 /**
  * 建置戳記，供 /api/version 回報，前端顯示在「音源」頁。
- * 自托管版不經打包，所以啟動時直接問 git；不在 git 工作區就回 dev。
  * 格式與 CF 版（scripts/build-stamp.mjs）一致。
+ *
+ * 優先讀 BUILD_STAMP：部署到伺服器時通常只丟 dist + 這支檔案過去，那邊沒有 git
+ * 工作區，問 git 只會得到 dev，於是前端（建置時編進去的真戳記）與後端就對不上，
+ * 版本區塊會誤報「只部署了一半」。部署腳本把建置當下的戳記用這個環境變數傳進來，
+ * 兩邊才會一致。取不到才退回問 git，最後才是 dev。
  */
-const SERVER_VERSION = (() => {
+const SERVER_VERSION = process.env.BUILD_STAMP || (() => {
   const run = (cmd) => {
     try {
       return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
@@ -1265,7 +1269,9 @@ const server = http.createServer(async (req, res) => {
     // ── API: /api/proxy ──────────────────────────────────
     // 建置戳記。自托管版不經 esbuild，故在啟動時從 git 取（取不到就回 dev）
     if (pathname === '/api/version') {
-      jsonResponse(res, { worker: SERVER_VERSION })
+      // sync 明確回 false：裝置配對碼靠 Cloudflare KV，自托管版沒有對應的儲存，
+      // 前端據此把「換裝置」整區隱藏，不顯示一個按了必定失敗的按鈕
+      jsonResponse(res, { worker: SERVER_VERSION, sync: false })
       return
     }
 
