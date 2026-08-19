@@ -1,6 +1,6 @@
 # WhyMusic 部署指南
 
-> 用瀏覽器搜尋、播放、下載音樂。基於 [MusicFree](https://github.com/maotoumao/MusicFree) 的插件系統。
+> 用瀏覽器搜尋、播放、收藏、下載音樂。插件介面相容 [MusicFree](https://github.com/maotoumao/MusicFree)。
 > 專案說明見 [README.md](README.md)。
 
 ---
@@ -13,10 +13,11 @@
 | 需要裝工具 | Node + pnpm + wrangler | **不需要** | Node + nginx |
 | 功能 | 完整 | 完整 | 完整 |
 | 更新方式 | `pnpm deploy:cf` | 重新上傳 zip | `git pull` + 重啟 |
-| 設定方式 | 改 `packages/web/worker/why.js` 常數 | 同 A | 環境變數 |
+| 設定方式 | 改 `plugins/whymusic.js` | 同 A | 環境變數 |
 | 上游快取 | 只在單一 isolate 內 | 同 A | 全站共用 |
 
-三種方式功能相同 —— CF 版把子源扇出、繁簡歸一化、跨子源救援全部移植過去了。
+三種方式功能相同。音源邏輯（子源扇出、繁簡歸一化、跨子源救援）在插件裡、由瀏覽器
+執行，所以三種部署共用同一份；後端只負責供應靜態檔、跨域代抓與配對碼。
 
 > **不需要任何金鑰或環境變數。** 兩個子音源（netease / joox）都走公開 API。
 
@@ -101,7 +102,7 @@ id = "你拿到的 id"
 
 ```bash
 pnpm install
-pnpm build:zip      # → dist-cf/musicweb-cf.zip（約 0.45 MiB，12 個檔）
+pnpm build:zip      # → dist-cf/musicweb-cf.zip（約 0.6 MiB，15 個檔）
 ```
 
 把 zip 交給對方，他只要：

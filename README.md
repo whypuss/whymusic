@@ -6,12 +6,17 @@
 
 ## 這是什麼
 
-基於 [MusicFree](https://github.com/maotoumao/MusicFree) 的插件系統做的純 Web 版。
-MusicFree 原本是 Android 播放器，靠插件連接不同音源；這個專案把那套插件機制搬到
-瀏覽器，並補上一個自己的聚合音源。
+一個跑在瀏覽器裡的音樂播放器。播放器與音源徹底分開：前端不認識任何音源，只透過
+一層插件介面問「給我一個可播的 URL」，音源自己去處理搜尋、扇出、救援、簽名。
 
 **app 出廠不帶任何音源** —— 開啟後要到「設置」頁貼上網址安裝，才能搜尋與播放。
-這是刻意的：播放器與音源完全分離（見下）。
+這是刻意的（見下）。
+
+插件介面與 [MusicFree](https://github.com/maotoumao/MusicFree) 相容 —— 方法簽名
+（`search` / `getMediaSource` / `getLyric` / `getMusicArtwork`）一致，沙箱也提供
+`axios`、`crypto-js`、`dayjs` 等模組的 shim，所以現成的 MusicFree 插件能直接貼網址
+安裝。但這裡沒有用到 MusicFree 的任何程式碼：播放器、插件管理器、沙箱與內建音源
+都是本專案自己實作的。
 
 ## 音源
 
@@ -234,7 +239,7 @@ musicweb/
 | 層 | 技術 |
 |----|------|
 | 前端 | React 18 + TypeScript + Tailwind CSS |
-| 核心 | MusicFree 插件系統（PluginManager + Player + `new Function` 沙箱） |
+| 核心 | 自製插件系統（PluginManager + Player + `new Function` 沙箱，介面相容 MusicFree） |
 | CF 後端 | Cloudflare Workers（單一 `_worker.js`，esbuild 打包）+ KV |
 | 自架後端 | Node.js（零外部依賴，只用內建模組） |
 
