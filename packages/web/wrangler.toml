@@ -1,3 +1,11 @@
-name = "musicweb"
+name = "whymusicweb"
 compatibility_date = "2024-01-01"
 pages_build_output_dir = "dist"
+
+# 裝置配對碼的暫存區（/api/sync）。存的是「你選了哪些音源」，24 小時後自動過期。
+#
+# 這個綁定是**可選的**：worker 沒有 SYNC 綁定時會回 501 並說明原因，前端則把同步
+# 區塊整個藏起來。拿 zip 自行部署的人不設定它，站台其餘功能完全不受影響。
+[[kv_namespaces]]
+binding = "SYNC"
+id = "71819ce506674a328662874cae71648d"

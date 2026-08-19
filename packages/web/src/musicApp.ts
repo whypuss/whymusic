@@ -238,6 +238,12 @@ export function useMusicApp() {
   const [reloadingPlugin, setReloadingPlugin] = useState(false)
   /** 後端（worker）回報的建置戳記。與 APP_VERSION 不一致就代表只部署了一半 */
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+  /** 這份部署有沒有綁 SYNC KV。沒有就不顯示同步區塊（zip 自行部署的情況） */
+  const [syncAvailable, setSyncAvailable] = useState(false)
+  /** 產生出來的配對碼，顯示給使用者抄到另一台裝置 */
+  const [syncCode, setSyncCode] = useState<string | null>(null)
+  const [syncInput, setSyncInput] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
@@ -313,7 +319,10 @@ export function useMusicApp() {
   useEffect(() => {
     fetch('/api/version', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => setServerVersion(d?.worker || 'unknown'))
+      .then(d => {
+        setServerVersion(d?.worker || 'unknown')
+        setSyncAvailable(!!d?.sync)
+      })
       .catch(() => setServerVersion(null))
   }, [])
 
@@ -1007,9 +1016,91 @@ export function useMusicApp() {
     }
   }
 
+  /**
+   * 產生裝置配對碼：把目前裝的音源丟到後端暫存，回一組 8 碼字串。
+   *
+   * 同步的是「你選了哪些音源」，不是音源本身 —— 音源檔一直都在站上，每台裝置
+   * 各自缺的只有那個選擇。刻意不做帳號：這個站沒有登入也不持有個人資料，
+   * 配對碼只是一份 24 小時後自動消失的暫存。
+   */
+  const createSyncCode = async () => {
+    const plugins = readCachedPlugins()
+    if (plugins.length === 0) {
+      showNotification('目前沒有已安裝的音源', 'error')
+      return
+    }
+    try {
+      setSyncBusy(true)
+      setSyncCode(null)
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugins }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      setSyncCode(data.code)
+      showNotification('同步碼已產生，24 小時內有效', 'success')
+    } catch (e: any) {
+      showNotification(`產生同步碼失敗：${e?.message || e}`, 'error')
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
+  /** 輸入配對碼，把另一台裝置的音源選擇套用到這一台 */
+  const applySyncCode = async () => {
+    const code = syncInput.trim()
+    if (!code) {
+      showNotification('請輸入同步碼', 'error')
+      return
+    }
+    try {
+      setSyncBusy(true)
+      const res = await fetch(`/api/sync?code=${encodeURIComponent(code)}`, { cache: 'no-store' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
+      const plugins: { name: string; code: string; enabled?: boolean }[] = data?.plugins || []
+      if (plugins.length === 0) throw new Error('這組同步碼沒有任何音源')
+
+      let ok = 0
+      for (const p of plugins) {
+        try {
+          // 走與手動安裝完全相同的路徑：載進沙箱 → 存快取 → 更新開關
+          const registered = loadPluginCode(p.code, p.name)
+          savePluginCode(registered, p.code)
+          if (p.enabled === false) pluginManager.setPluginEnabled(registered, false)
+          setPluginToggles(prev => ({ ...prev, [registered]: p.enabled !== false }))
+          ok++
+        } catch (e) {
+          console.error(`[sync] ${p.name} 套用失敗:`, e)
+        }
+      }
+      savePluginsToStorage()
+      setPluginKey(k => k + 1)
+      setSyncInput('')
+      if (ok === 0) throw new Error('音源都套用失敗')
+      showNotification(
+        ok === plugins.length ? `已套用 ${ok} 個音源` : `套用了 ${ok}/${plugins.length} 個音源`,
+        'success',
+      )
+    } catch (e: any) {
+      showNotification(`套用同步碼失敗：${e?.message || e}`, 'error')
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   // 依賴 pluginKey 來觸發重渲染，確保插件按鈕狀態正確
 
   return {
+    applySyncCode,
+    createSyncCode,
+    syncAvailable,
+    syncBusy,
+    syncCode,
+    syncInput,
+    setSyncInput,
     albumDetail,
     albumLoading,
     albumTracks,

@@ -55,8 +55,95 @@ async function handleProxy(request, url) {
   return new Response(response.body, { status: response.status, headers: respHeaders })
 }
 
-async function handleApi(pathname, request, url) {
+// ── 裝置配對碼 ──────────────────────────────────────────────────────
+// 存的是「你選了哪些音源」，不是音源本身 —— 音源檔一直都在站上（/plugins/*.js），
+// 每台裝置各自缺的只有「你做過的那個選擇」。
+//
+// 刻意不做帳號：這個站沒有登入、沒有 cookie、不持有任何個人資料，加一套帳號系統
+// 就得處理憑證、session、密碼重設、資料刪除，成本遠大於它要解決的問題。配對碼
+// 只是一份 24 小時後自動消失的暫存，沒有任何東西能連回「人」。
+//
+// 去掉 0/O/1/I 這些看起來像的字元，使用者要用手打。8 碼 × 32 種 = 40 bits。
+const SYNC_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+const SYNC_CODE_LEN = 8
+const SYNC_TTL = 86400            // 24 小時
+const SYNC_MAX_BYTES = 256 * 1024 // 一份音源約 15 KB，這個上限很寬鬆
+const SYNC_MAX_PLUGINS = 12
+
+function newSyncCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(SYNC_CODE_LEN))
+  let out = ''
+  // 32 是 2 的冪，取模不會有偏差
+  for (const b of bytes) out += SYNC_ALPHABET[b % SYNC_ALPHABET.length]
+  return out
+}
+
+/** 使用者可能連著連字號或小寫一起貼進來 */
+function normalizeSyncCode(raw) {
+  return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+async function handleSync(request, url, env) {
+  if (!env?.SYNC) {
+    // 拿 zip 自行部署的人不會有這個綁定。講清楚原因，不要假裝成伺服器錯誤
+    return jsonResponse({ error: '此部署未啟用同步功能（缺少 SYNC KV 綁定）' }, 501)
+  }
+
+  if (request.method === 'POST') {
+    const body = await request.text()
+    if (body.length > SYNC_MAX_BYTES) {
+      return jsonResponse({ error: '資料過大，無法同步' }, 413)
+    }
+    let parsed
+    try {
+      parsed = JSON.parse(body)
+    } catch {
+      return jsonResponse({ error: '請求格式錯誤' }, 400)
+    }
+    const plugins = Array.isArray(parsed?.plugins) ? parsed.plugins : null
+    if (!plugins || plugins.length === 0) {
+      return jsonResponse({ error: '沒有可同步的音源' }, 400)
+    }
+    if (plugins.length > SYNC_MAX_PLUGINS) {
+      return jsonResponse({ error: `音源數量超過上限（${SYNC_MAX_PLUGINS}）` }, 400)
+    }
+    // 只留我們認得的欄位，別把使用者端塞進來的任何東西原樣存下
+    const clean = plugins.map(p => ({
+      name: String(p?.name || ''),
+      code: String(p?.code || ''),
+      enabled: p?.enabled !== false,
+    }))
+    if (clean.some(p => !p.name || !p.code)) {
+      return jsonResponse({ error: '音源資料不完整' }, 400)
+    }
+
+    const code = newSyncCode()
+    await env.SYNC.put(`sync:${code}`, JSON.stringify({ plugins: clean }), {
+      expirationTtl: SYNC_TTL,
+    })
+    return jsonResponse({ code, expiresIn: SYNC_TTL })
+  }
+
+  if (request.method === 'GET') {
+    const code = normalizeSyncCode(url.searchParams.get('code'))
+    if (code.length !== SYNC_CODE_LEN) {
+      return jsonResponse({ error: '同步碼格式不正確' }, 400)
+    }
+    const raw = await env.SYNC.get(`sync:${code}`)
+    if (!raw) {
+      return jsonResponse({ error: '找不到這組同步碼，可能已過期（有效 24 小時）' }, 404)
+    }
+    return jsonResponse(JSON.parse(raw))
+  }
+
+  return jsonResponse({ error: '不支援的方法' }, 405)
+}
+
+async function handleApi(pathname, request, url, env) {
   switch (pathname) {
+    case '/api/sync':
+      return await handleSync(request, url, env)
+
     case '/api/why-search': {
       const keyword = url.searchParams.get('q')
       const type = url.searchParams.get('type') || 'music'
@@ -120,6 +207,9 @@ async function handleApi(pathname, request, url) {
       // 不一致就代表只部署了一半（例如前端更新了但 worker 沒有）
       return jsonResponse({
         worker: typeof __WORKER_VERSION__ !== 'undefined' ? __WORKER_VERSION__ : 'unknown',
+        // 這份部署有沒有綁 SYNC KV。前端據此決定要不要顯示同步區塊 ——
+        // 拿 zip 自行部署的人沒綁，就不該看到一個按了必定失敗的按鈕
+        sync: !!env?.SYNC,
       })
 
     case '/api/proxy':
@@ -148,7 +238,7 @@ export default {
 
     if (pathname.startsWith('/api/')) {
       try {
-        return await handleApi(pathname, request, url)
+        return await handleApi(pathname, request, url, env)
       } catch (err) {
         console.error(`[${pathname}]`, err && err.message)
         return jsonResponse({ error: (err && err.message) || 'Internal error' }, 500)

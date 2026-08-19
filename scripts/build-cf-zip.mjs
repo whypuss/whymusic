@@ -65,6 +65,9 @@ fs.writeFileSync(path.join(STAGE, 'README.txt'), `WhyMusic Web — Cloudflare Pa
   - 選了 Direct Upload 之後無法改成 Git 連動，要自動部署得另建專案。
   - 音源走公開 API，不需要任何金鑰或環境變數。
   - 「音源」頁底部會顯示前端／後端建置戳記，兩者應一致；不一致代表只部署了一半。
+  - 「換裝置」的同步碼功能需要一個名為 SYNC 的 KV 綁定，沒綁定時整個區塊會自動
+    隱藏，其餘功能完全不受影響。要啟用的話：在 Cloudflare 建一個 KV namespace，
+    到專案的 Settings → Bindings 加一個 KV binding，變數名稱填 SYNC。
 `)
 
 // 3) 打包 zip。zip 內不要有多一層目錄，CF 才認得出根目錄

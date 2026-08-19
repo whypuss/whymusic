@@ -94,14 +94,16 @@ function EmptyState({ text }: { text: string }) {
 
 export default function AppleUI({ app }: { app: MusicApp }) {
   const {
-    albumDetail, albumLoading, albumTracks, currentTime, currentView, cyclePlayMode, duration,
+    albumDetail, albumLoading, albumTracks, applySyncCode, createSyncCode,
+    currentTime, currentView, cyclePlayMode, duration,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
     hasMore, installPluginFromURL, isPlaying, keyword, loadMore, loading,
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
     recommendSongs, recommendUnsupported, removePlugin, results, search,
     searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
-    setSearchPage, setSearchType, switchRecommendMode, togglePlay, togglePlugin,
+    setSearchPage, setSearchType, setSyncInput, switchRecommendMode, syncAvailable, syncBusy,
+    syncCode, syncInput, togglePlay, togglePlugin,
   } = app
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
@@ -404,6 +406,53 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   )}
                 </div>
               </div>
+
+              {/*
+                裝置同步。音源是存在瀏覽器的 localStorage 裡（綁裝置 × 瀏覽器 ×
+                網域），換一台就得重裝。這裡用一組 24 小時後自動失效的配對碼把
+                「你選了哪些音源」搬過去，不需要帳號也不留任何個人資料。
+                後端沒綁 SYNC KV 時整區隱藏 —— 不顯示一個按了必定失敗的按鈕。
+              */}
+              {syncAvailable && (
+                <div className="mt-6">
+                  <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                    換裝置
+                  </div>
+                  <div className="rounded-[14px] bg-white/[0.07] p-4 space-y-4">
+                    <div>
+                      <button onClick={createSyncCode} disabled={syncBusy}
+                        className="w-full py-3 rounded-[11px] bg-white/15 text-[15px] font-medium
+                                   active:opacity-70 disabled:opacity-40 transition">
+                        產生同步碼
+                      </button>
+                      {syncCode && (
+                        <div className="mt-3 text-center">
+                          <div className="text-[26px] font-semibold tracking-[0.2em] tabular-nums">
+                            {syncCode.slice(0, 4)}-{syncCode.slice(4)}
+                          </div>
+                          <div className="text-[12px] text-white/40 mt-1">
+                            在另一台裝置輸入這組碼。24 小時後失效。
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="h-px bg-white/[0.08]" />
+                    <div className="space-y-2">
+                      <input value={syncInput} onChange={e => setSyncInput(e.target.value)}
+                        placeholder="輸入另一台裝置的同步碼"
+                        autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+                        className="w-full px-4 py-3 rounded-[11px] bg-white/[0.07] text-[15px]
+                                   tracking-[0.15em] placeholder:tracking-normal
+                                   placeholder:text-white/30 outline-none focus:bg-white/10 transition" />
+                      <button onClick={applySyncCode} disabled={syncBusy || !syncInput.trim()}
+                        className="w-full py-3 rounded-[11px] bg-[#0A84FF] text-[15px] font-medium
+                                   active:opacity-70 disabled:opacity-40 transition">
+                        套用
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/*
                 版本資訊。前端與後端各報一個建置戳記 —— 換版後看到舊行為時，
