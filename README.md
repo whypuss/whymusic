@@ -12,11 +12,14 @@
 **app 出廠不帶任何音源** —— 開啟後要到「設置」頁貼上網址安裝，才能搜尋與播放。
 這是刻意的（見下）。
 
-插件介面與 [MusicFree](https://github.com/maotoumao/MusicFree) 相容 —— 方法簽名
-（`search` / `getMediaSource` / `getLyric` / `getMusicArtwork`）一致，沙箱也提供
-`axios`、`crypto-js`、`dayjs` 等模組的 shim，所以現成的 MusicFree 插件能直接貼網址
-安裝。但這裡沒有用到 MusicFree 的任何程式碼：播放器、插件管理器、沙箱與內建音源
-都是本專案自己實作的。
+插件是一支 CommonJS 檔案，`module.exports` 出幾個方法就是一個音源；載入時跑在
+`new Function` 的沙箱裡。內建音源 `plugins/whymusic.js` 只用原生 `fetch`，沒有任何
+外部依賴。
+
+播放器、插件管理器、沙箱與內建音源都是本專案自己實作的。插件的方法簽名沿用
+[MusicFree](https://github.com/maotoumao/MusicFree) 那一套慣例，沙箱也保留了
+`axios` / `crypto-js` / `cheerio` 等 shim，所以為它寫的第三方插件多半也能直接裝 ——
+但這個專案沒有用到它的任何程式碼。
 
 ## 音源
 
@@ -49,8 +52,8 @@
 **裝完就與 GitHub 無關**。代價是它不會自動更新：改了 `plugins/whymusic.js` 並重新
 部署之後，要在「設置」頁重新貼一次網址才會拿到新版。
 
-改音源邏輯不必改前端程式碼。第三方 MusicFree 插件也能貼網址安裝；外部網址由後端
-經 `/api/proxy` 代抓，你的瀏覽器不必連得到那個託管站。
+改音源邏輯不必改前端程式碼。第三方插件同樣是貼網址安裝；外部網址由後端經
+`/api/proxy` 代抓，你的瀏覽器不必連得到那個託管站。
 
 ## 播放器與音源完全分離
 
@@ -59,7 +62,7 @@
 | 功能 | 插件方法 |
 |------|----------|
 | 搜尋（歌曲） | `search(query, page, type)` |
-| 推薦 | `getRecommend(mode, limit)` — musicweb 擴充，非 MusicFree 標準 |
+| 推薦 | `getRecommend(mode, limit)` — 本專案擴充的方法 |
 | 播放 / 下載 | `getMediaSource(item)` |
 | 歌詞 / 封面 | `getLyric` / `getMusicArtwork` |
 
@@ -239,7 +242,7 @@ musicweb/
 | 層 | 技術 |
 |----|------|
 | 前端 | React 18 + TypeScript + Tailwind CSS |
-| 核心 | 自製插件系統（PluginManager + Player + `new Function` 沙箱，介面相容 MusicFree） |
+| 核心 | 自製插件系統（PluginManager + 雙元素 Player + `new Function` 沙箱） |
 | CF 後端 | Cloudflare Workers（單一 `_worker.js`，esbuild 打包）+ KV |
 | 自架後端 | Node.js（零外部依賴，只用內建模組） |
 

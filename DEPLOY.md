@@ -1,6 +1,6 @@
 # WhyMusic 部署指南
 
-> 用瀏覽器搜尋、播放、收藏、下載音樂。插件介面相容 [MusicFree](https://github.com/maotoumao/MusicFree)。
+> 用瀏覽器搜尋、播放、收藏、下載音樂。
 > 專案說明見 [README.md](README.md)。
 
 ---
