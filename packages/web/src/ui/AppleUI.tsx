@@ -42,8 +42,16 @@ function Segmented<T extends string>({
 
 /** 歌曲／專輯列。用微妙的分隔線而非卡片邊框，接近 iOS 的 list */
 function Row({
-  item, active, onClick, onDownload,
-}: { item: MusicItem; active: boolean; onClick: () => void; onDownload: () => void }) {
+  item, active, onClick, onDownload, favorite, onToggleFavorite,
+}: {
+  item: MusicItem
+  active: boolean
+  onClick: () => void
+  onDownload: () => void
+  // 專輯／歌單這類容器沒有收藏的意義，那時不傳這兩個，心心就不出現
+  favorite?: boolean
+  onToggleFavorite?: () => void
+}) {
   return (
     <div
       onClick={onClick}
@@ -74,6 +82,23 @@ function Row({
           {item.type === 'album' && <span className="ml-1.5 text-white/30">· 專輯</span>}
         </div>
       </div>
+      {onToggleFavorite && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleFavorite() }}
+          title={favorite ? '取消收藏' : '收藏'}
+          aria-label={favorite ? '取消收藏' : '收藏'}
+          aria-pressed={favorite}
+          className={`w-8 h-8 rounded-full flex items-center justify-center transition flex-shrink-0
+                      hover:bg-white/10 ${favorite ? 'text-[#FF375F]' : 'text-white/35 hover:text-[#FF375F]'}`}
+        >
+          {/* 已收藏填滿、未收藏只有描邊 —— 靠顏色分辨在深色背景上不夠清楚 */}
+          <svg width="17" height="17" viewBox="0 0 16 16"
+            fill={favorite ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5">
+            <path d="M8 13.5S2 10 2 6.2A3.2 3.2 0 0 1 8 4.6a3.2 3.2 0 0 1 6 1.6C14 10 8 13.5 8 13.5z"
+              strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
       <button
         onClick={e => { e.stopPropagation(); onDownload() }}
         title="下載"
@@ -95,21 +120,22 @@ function EmptyState({ text }: { text: string }) {
 export default function AppleUI({ app }: { app: MusicApp }) {
   const {
     albumDetail, albumLoading, albumTracks, applySyncCode, createSyncCode,
-    currentTime, currentView, cyclePlayMode, duration,
+    currentTime, currentView, cyclePlayMode, duration, favorites,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
-    hasMore, installPluginFromURL, isPlaying, keyword, loadMore, loading,
+    hasMore, installPluginFromURL, isFavorite, isPlaying, keyword, loadMore, loading,
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
     recommendSongs, recommendUnsupported, removePlugin, results, search,
     searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setSearchPage, setSearchType, setSyncInput, switchRecommendMode, syncAvailable, syncBusy,
-    syncCode, syncInput, togglePlay, togglePlugin,
+    syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
   } = app
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const tabs = [
     { key: 'recommend' as const, label: '推薦' },
     { key: 'search' as const, label: '搜尋' },
+    { key: 'favorites' as const, label: '收藏' },
     { key: 'plugins' as const, label: '音源' },
   ]
   // 內建與第三方音源不再分開列 —— 安裝方式統一成貼網址，區分它們沒有意義了。
@@ -204,6 +230,36 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     active={playingItem?.id === item.id}
                     onClick={() => handleItemClick(item)}
                     onDownload={() => handleDownload(item)}
+                    favorite={isFavorite(item)}
+                    onToggleFavorite={() => toggleFavorite(item)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── 收藏 ── */}
+          {currentView === 'favorites' && (
+            <>
+              <div className="px-4 pt-8 pb-4">
+                <h1 className="text-[34px] font-bold tracking-tight leading-tight">收藏</h1>
+                <p className="text-[15px] text-white/45 mt-0.5">
+                  {favorites.length > 0 ? `${favorites.length} 首 · 依序播放` : '存在這台裝置上'}
+                </p>
+              </div>
+              {favorites.length === 0 && (
+                <EmptyState text="還沒有收藏。點曲目右邊的心心加進來。" />
+              )}
+              <div className="divide-y divide-white/[0.06]">
+                {favorites.map(item => (
+                  <Row
+                    key={`${item.platform}-${item.id}`}
+                    item={item}
+                    active={playingItem?.id === item.id}
+                    onClick={() => handleItemClick(item)}
+                    onDownload={() => handleDownload(item)}
+                    favorite
+                    onToggleFavorite={() => toggleFavorite(item)}
                   />
                 ))}
               </div>
@@ -256,6 +312,9 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     active={playingItem?.id === item.id}
                     onClick={() => handleItemClick(item)}
                     onDownload={() => handleDownload(item)}
+                    // 專輯／歌單是容器，收藏它沒有意義（收藏頁要能直接播）
+                    favorite={item.type === 'music' ? isFavorite(item) : undefined}
+                    onToggleFavorite={item.type === 'music' ? () => toggleFavorite(item) : undefined}
                   />
                 ))}
               </div>
@@ -312,6 +371,8 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                       { list: albumTracks, index: idx, order: 'sequential' },
                     )}
                     onDownload={() => handleDownload(track)}
+                    favorite={isFavorite(track)}
+                    onToggleFavorite={() => toggleFavorite(track)}
                   />
                 ))}
               </div>

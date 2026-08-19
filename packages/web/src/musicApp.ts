@@ -30,6 +30,7 @@ export const APP_VERSION =
 const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
 const STORAGE_PLAY_MODE = 'musicfree-play-mode'
+const STORAGE_FAVORITES = 'musicfree-favorites'
 
 export type PlayMode = 'auto' | 'one' | 'off'
 const PLAY_MODE_ORDER: PlayMode[] = ['auto', 'one', 'off']
@@ -229,7 +230,20 @@ export function useMusicApp() {
   const [lockedItem, setLockedItem] = useState<{ title: string; artist: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend'>('recommend')
+  const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend' | 'favorites'>('recommend')
+  /**
+   * 收藏的曲目。整個 MusicItem 存下來（不只 id）—— 收藏頁要能在沒有搜尋過、
+   * 也沒有載入推薦的情況下直接列出並播放，只存 id 的話還得回頭去問音源。
+   * 順序就是收藏的先後，收藏頁依這個順序依序播。
+   */
+  const [favorites, setFavorites] = useState<MusicItem[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_FAVORITES) || '[]')
+      return Array.isArray(raw) ? raw : []
+    } catch {
+      return []
+    }
+  })
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
@@ -837,6 +851,35 @@ export function useMusicApp() {
   }
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
+  /**
+   * 收藏用的鍵。刻意與播放佇列的 queueKey 同一套（platform + id）——
+   * 兩邊要是各用各的判斷，就會出現「收藏頁顯示已收藏、搜尋頁顯示沒收藏」。
+   */
+  const favoriteKeys = useMemo(
+    () => new Set(favorites.map(f => `${f.platform || ''}::${f.id}`)),
+    [favorites],
+  )
+
+  const isFavorite = (item: MusicItem) => favoriteKeys.has(`${item.platform || ''}::${item.id}`)
+
+  const toggleFavorite = (item: MusicItem) => {
+    const key = `${item.platform || ''}::${item.id}`
+    setFavorites(prev => {
+      const exists = prev.some(f => `${f.platform || ''}::${f.id}` === key)
+      // 新收藏的放最後，維持「收藏的先後」就是播放順序
+      const next = exists
+        ? prev.filter(f => `${f.platform || ''}::${f.id}` !== key)
+        : [...prev, item]
+      try {
+        localStorage.setItem(STORAGE_FAVORITES, JSON.stringify(next))
+      } catch (e) {
+        console.error('[favorites] 寫入失敗:', e)
+      }
+      showNotification(exists ? '已取消收藏' : `已收藏「${item.title}」`, 'info')
+      return next
+    })
+  }
+
   const handleItemClick = (item: MusicItem) => {
     if (item.type === 'album' || item.type === 'sheet') {
       // 專輯/歌單：顯示專輯詳情
@@ -852,13 +895,18 @@ export function useMusicApp() {
       // 歌曲：連同它所在的清單一起傳入，播完才知道要接什麼。
       // 搜尋結果依序播（使用者看到的順序就是播放順序）；推薦頁隨機
       // （那是一份千首的榜單，依序播會永遠繞在前幾首）。
-      const fromRecommend = currentView === 'recommend'
-      const list = fromRecommend ? recommendSongs : results
-      const index = list.findIndex(s => s.id === item.id && s.platform === item.platform)
+      // 收藏頁依序播 —— 那是使用者自己一首一首挑出來的清單，順序有意義，
+      // 隨機跳會讓「我想從頭聽一遍我收藏的歌」變成做不到的事。
+      const source = currentView === 'recommend'
+        ? { list: recommendSongs, order: 'shuffle' as PlayOrder }
+        : currentView === 'favorites'
+          ? { list: favorites, order: 'sequential' as PlayOrder }
+          : { list: results, order: 'sequential' as PlayOrder }
+      const index = source.list.findIndex(s => s.id === item.id && s.platform === item.platform)
       play(item, {
-        list,
+        list: source.list,
         index: index >= 0 ? index : 0,
-        order: fromRecommend ? 'shuffle' : 'sequential',
+        order: source.order,
       })
     }
   }
@@ -1096,6 +1144,9 @@ export function useMusicApp() {
   return {
     applySyncCode,
     createSyncCode,
+    favorites,
+    isFavorite,
+    toggleFavorite,
     syncAvailable,
     syncBusy,
     syncCode,
