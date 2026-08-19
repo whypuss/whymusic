@@ -10,6 +10,14 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createHmac } from 'node:crypto'
 import { execSync } from 'node:child_process'
+import {
+  SYNC_CODE_LEN,
+  SYNC_MAX_BYTES,
+  SYNC_TTL,
+  newSyncCode,
+  normalizeSyncCode,
+  validateSyncPayload,
+} from '../shared/sync.js'
 
 /**
  * 建置戳記，供 /api/version 回報，前端顯示在「音源」頁。
@@ -38,6 +46,30 @@ const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
 // 音源插件目錄（repo 根層 plugins/）。由本服務直接供應，執行時不碰 GitHub。
 const PLUGINS_DIR = process.env.PLUGINS_DIR
   || path.resolve(import.meta.dirname, '../../../plugins')
+
+/**
+ * 裝置配對碼的暫存目錄。CF 版用 KV，自架版沒有 KV，但有檔案系統 —— 一組碼一個
+ * 小 JSON 檔就夠了，不必為此拉一個資料庫進來（這支服務的原則是零外部相依）。
+ * 碼的格式與驗證規則與 CF 版共用 ../shared/sync.js。
+ */
+const SYNC_DIR = process.env.SYNC_DIR || path.resolve(import.meta.dirname, '../../../.sync')
+
+/** 刪掉過期的碼。檔案數很少（一台機器同時存在的碼是個位數），全掃無妨 */
+function sweepExpiredSyncCodes() {
+  try {
+    for (const name of fs.readdirSync(SYNC_DIR)) {
+      if (!name.endsWith('.json')) continue
+      const file = path.join(SYNC_DIR, name)
+      try {
+        const { expires } = JSON.parse(fs.readFileSync(file, 'utf8'))
+        if (!expires || Date.now() > expires) fs.unlinkSync(file)
+      } catch {
+        // 壞掉或讀不出來的就清掉，留著也沒用
+        fs.unlinkSync(file)
+      }
+    }
+  } catch { /* 目錄還不存在，沒東西要掃 */ }
+}
 
 // ── OAuth 1.0 Configuration ────────────────────────────────────────
 // Load from environment variables. Defaults are Audiomack's public
@@ -1269,9 +1301,78 @@ const server = http.createServer(async (req, res) => {
     // ── API: /api/proxy ──────────────────────────────────
     // 建置戳記。自托管版不經 esbuild，故在啟動時從 git 取（取不到就回 dev）
     if (pathname === '/api/version') {
-      // sync 明確回 false：裝置配對碼靠 Cloudflare KV，自托管版沒有對應的儲存，
-      // 前端據此把「換裝置」整區隱藏，不顯示一個按了必定失敗的按鈕
-      jsonResponse(res, { worker: SERVER_VERSION, sync: false })
+      // 自架版的配對碼存在檔案系統（見 /api/sync），所以這裡回 true
+      jsonResponse(res, { worker: SERVER_VERSION, sync: true })
+      return
+    }
+
+    // ── API: /api/sync ───────────────────────────────────
+    // 裝置配對碼。CF 版存 KV，這裡存檔案 —— 一組碼一個小 JSON，24 小時後過期。
+    // 驗證規則與 CF 版共用 shared/sync.js，兩邊產生的碼格式必然一致。
+    if (pathname === '/api/sync') {
+      if (req.method === 'POST') {
+        const raw = await new Promise((resolve) => {
+          const chunks = []
+          let size = 0
+          req.on('data', (chunk) => {
+            size += chunk.length
+            // 邊收邊擋，別讓超大的請求先整包進記憶體 —— 這台機器只有 256MB
+            if (size <= SYNC_MAX_BYTES) chunks.push(chunk)
+          })
+          req.on('end', () => resolve({ body: Buffer.concat(chunks).toString('utf8'), size }))
+        })
+        if (raw.size > SYNC_MAX_BYTES) {
+          jsonResponse(res, { error: '資料過大，無法同步' }, 413)
+          return
+        }
+        let parsed
+        try {
+          parsed = JSON.parse(raw.body)
+        } catch {
+          jsonResponse(res, { error: '請求格式錯誤' }, 400)
+          return
+        }
+        const { error, clean } = validateSyncPayload(parsed)
+        if (error) {
+          jsonResponse(res, { error }, 400)
+          return
+        }
+        sweepExpiredSyncCodes()
+        fs.mkdirSync(SYNC_DIR, { recursive: true })
+        const code = newSyncCode()
+        fs.writeFileSync(
+          path.join(SYNC_DIR, `${code}.json`),
+          JSON.stringify({ plugins: clean, expires: Date.now() + SYNC_TTL * 1000 }),
+        )
+        jsonResponse(res, { code, expiresIn: SYNC_TTL })
+        return
+      }
+
+      if (req.method === 'GET') {
+        const code = normalizeSyncCode(url.searchParams.get('code'))
+        // 長度檢查同時也是路徑防護：正規化只留 A-Z0-9，拼不出 ../
+        if (code.length !== SYNC_CODE_LEN) {
+          jsonResponse(res, { error: '同步碼格式不正確' }, 400)
+          return
+        }
+        const file = path.join(SYNC_DIR, `${code}.json`)
+        let stored
+        try {
+          stored = JSON.parse(fs.readFileSync(file, 'utf8'))
+        } catch {
+          jsonResponse(res, { error: '找不到這組同步碼，可能已過期（有效 24 小時）' }, 404)
+          return
+        }
+        if (!stored.expires || Date.now() > stored.expires) {
+          try { fs.unlinkSync(file) } catch { /* 已經不在了 */ }
+          jsonResponse(res, { error: '找不到這組同步碼，可能已過期（有效 24 小時）' }, 404)
+          return
+        }
+        jsonResponse(res, { plugins: stored.plugins })
+        return
+      }
+
+      jsonResponse(res, { error: '不支援的方法' }, 405)
       return
     }
 

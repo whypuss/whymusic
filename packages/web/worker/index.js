@@ -20,6 +20,14 @@ import {
   jsonResponse,
   GD_BITRATE,
 } from './why.js'
+import {
+  SYNC_CODE_LEN,
+  SYNC_MAX_BYTES,
+  SYNC_TTL,
+  newSyncCode,
+  normalizeSyncCode,
+  validateSyncPayload,
+} from '../shared/sync.js'
 
 /** 跨域代抓。音源 URL 與第三方插件都靠它，必須保留 Range 以便 seek */
 async function handleProxy(request, url) {
@@ -63,26 +71,9 @@ async function handleProxy(request, url) {
 // 就得處理憑證、session、密碼重設、資料刪除，成本遠大於它要解決的問題。配對碼
 // 只是一份 24 小時後自動消失的暫存，沒有任何東西能連回「人」。
 //
-// 去掉 0/O/1/I 這些看起來像的字元，使用者要用手打。8 碼 × 32 種 = 40 bits。
-const SYNC_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
-const SYNC_CODE_LEN = 8
-const SYNC_TTL = 86400            // 24 小時
-const SYNC_MAX_BYTES = 256 * 1024 // 一份音源約 15 KB，這個上限很寬鬆
-const SYNC_MAX_PLUGINS = 12
-
-function newSyncCode() {
-  const bytes = crypto.getRandomValues(new Uint8Array(SYNC_CODE_LEN))
-  let out = ''
-  // 32 是 2 的冪，取模不會有偏差
-  for (const b of bytes) out += SYNC_ALPHABET[b % SYNC_ALPHABET.length]
-  return out
-}
-
-/** 使用者可能連著連字號或小寫一起貼進來 */
-function normalizeSyncCode(raw) {
-  return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
-}
-
+// 碼的格式與驗證規則放在 ../shared/sync.js，與自架版的 server.mjs 共用 ——
+// 兩邊各寫一份的話，只要有一邊改了規則，就會出現「A 裝置產生的碼 B 裝置說格式
+// 不正確」這種極難查的問題。這裡只實作 KV 這一種儲存。
 async function handleSync(request, url, env) {
   if (!env?.SYNC) {
     // 拿 zip 自行部署的人不會有這個綁定。講清楚原因，不要假裝成伺服器錯誤
@@ -100,22 +91,8 @@ async function handleSync(request, url, env) {
     } catch {
       return jsonResponse({ error: '請求格式錯誤' }, 400)
     }
-    const plugins = Array.isArray(parsed?.plugins) ? parsed.plugins : null
-    if (!plugins || plugins.length === 0) {
-      return jsonResponse({ error: '沒有可同步的音源' }, 400)
-    }
-    if (plugins.length > SYNC_MAX_PLUGINS) {
-      return jsonResponse({ error: `音源數量超過上限（${SYNC_MAX_PLUGINS}）` }, 400)
-    }
-    // 只留我們認得的欄位，別把使用者端塞進來的任何東西原樣存下
-    const clean = plugins.map(p => ({
-      name: String(p?.name || ''),
-      code: String(p?.code || ''),
-      enabled: p?.enabled !== false,
-    }))
-    if (clean.some(p => !p.name || !p.code)) {
-      return jsonResponse({ error: '音源資料不完整' }, 400)
-    }
+    const { error, clean } = validateSyncPayload(parsed)
+    if (error) return jsonResponse({ error }, 400)
 
     const code = newSyncCode()
     await env.SYNC.put(`sync:${code}`, JSON.stringify({ plugins: clean }), {
