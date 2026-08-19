@@ -51,7 +51,7 @@ fs.writeFileSync(path.join(STAGE, 'README.txt'), `WhyMusic Web — Cloudflare Pa
   4. 部署完成後開啟 <你的專案>.pages.dev
 
 匯入音源（播放器預設不附音源）：
-  進站後到「音源」頁，在「從網址安裝」貼上：
+  進站後到「設置」頁，在「從網址安裝」貼上：
       https://<你的專案>.pages.dev/plugins/whymusic.js
   按「安裝」即可搜尋與播放。也可以改貼任何其他相容音源的網址。
 
@@ -64,7 +64,7 @@ fs.writeFileSync(path.join(STAGE, 'README.txt'), `WhyMusic Web — Cloudflare Pa
   - 儀表板拖拉上傳單檔上限 25 MiB、檔案數上限 1000，本包遠低於此。
   - 選了 Direct Upload 之後無法改成 Git 連動，要自動部署得另建專案。
   - 音源走公開 API，不需要任何金鑰或環境變數。
-  - 「音源」頁底部會顯示前端／後端建置戳記，兩者應一致；不一致代表只部署了一半。
+  - 「設置」頁底部會顯示前端／後端建置戳記，兩者應一致；不一致代表只部署了一半。
   - 「換裝置」的同步碼功能需要一個名為 SYNC 的 KV 綁定，沒綁定時整個區塊會自動
     隱藏，其餘功能完全不受影響。要啟用的話：在 Cloudflare 建一個 KV namespace，
     到專案的 Settings → Bindings 加一個 KV binding，變數名稱填 SYNC。

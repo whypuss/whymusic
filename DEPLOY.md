@@ -20,7 +20,7 @@
 
 > **不需要任何金鑰或環境變數。** 兩個子音源（netease / joox）都走公開 API。
 
-**所有方式部署完成後，都要先到「音源」頁安裝音源** —— app 出廠不帶音源，
+**所有方式部署完成後，都要先到「設置」頁安裝音源** —— app 出廠不帶音源，
 不裝就搜不到也播不了。網址是 `/plugins/whymusic.js`，該頁點一下會自動填入。
 
 ---
@@ -62,6 +62,26 @@ git pull
 pnpm deploy:cf
 ```
 
+### 換裝置的配對碼（可選）
+
+「設置」→ 換裝置 需要一個 KV 儲存。沒設定的話那一區會整個隱藏，其餘功能不受影響。
+
+```bash
+cd packages/web
+wrangler kv namespace create SYNC
+```
+
+把回傳的 id 填進 `packages/web/wrangler.toml`：
+
+```toml
+[[kv_namespaces]]
+binding = "SYNC"
+id = "你拿到的 id"
+```
+
+再 `pnpm deploy:cf` 一次即可。確認方式：`curl -s https://你的站/api/version` 回應裡的
+`sync` 應為 `true`。
+
 > **為什麼不是 push 就自動部署**：用 wrangler 建立的專案屬於 Direct Upload，
 > Cloudflare 不允許事後改接 Git（官方文件明載這是單向選擇）。
 >
@@ -89,7 +109,7 @@ pnpm build:zip      # → dist-cf/musicweb-cf.zip（約 0.45 MiB，12 個檔）
 1. Cloudflare 儀表板 → Workers & Pages → Create → Pages
 2. 選 **Upload assets**（Direct Upload），取個專案名
 3. 把 zip **整包拖進去**（不用解壓）
-4. 開啟 `<專案名>.pages.dev`，到「音源」頁安裝音源
+4. 開啟 `<專案名>.pages.dev`，到「設置」頁安裝音源
 
 zip 內已附 `README.txt` 說明。
 
@@ -149,14 +169,8 @@ sudo chmod 600 /etc/whymusic.env
 | `WHY_MUSIC_SOURCES` | `netease,joox` | 啟用的子音源 |
 | `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子源適用） |
 | `GD_API_URL` | `https://music-api.gdstudio.xyz/api.php` | GD 上游位址 |
-| `AUDIOMACK_SEARCH_CONSUMER_KEY` / `_SECRET` | `audiomack-js` / 公開值 | Audiomack 搜尋 |
-| `AUDIOMACK_MEDIA_CONSUMER_KEY` / `_SECRET` | 同上 | Audiomack 音源 |
-
-⚠️ **Audiomack 已不是子音源**（播放不穩且疑似地域限制，見 README），那組
-`AUDIOMACK_*` 只影響 `server.mjs` 仍保留的舊端點。若要設，key 與 secret 必須成對 ——
-曾經踩過 `AUDIOMACK_MEDIA_CONSUMER_KEY=audiomack-web` 配 `audiomack-js` 的 secret，
-簽名一律失敗回 `1003 Invalid signature`，而搜尋照常運作、只有播放壞掉，很難聯想到
-是設定問題。不確定就整組不要設。
+| `SYNC_DIR` | repo 的 `.sync/` | 裝置配對碼的暫存目錄 |
+| `BUILD_STAMP` | 啟動時問 git | 建置戳記。從本機上傳（機器上沒有 git 工作區）時要傳，否則版本區塊會誤報前後端不一致 |
 
 完整範例見 [.env.example](.env.example)。
 
@@ -258,7 +272,7 @@ sudo certbot --nginx -d music.example.com
 ## 常見問題
 
 **Q: 開站後搜尋顯示「搜尋需要音源」？**
-A: 正常 —— app 出廠不帶音源。到「音源」頁，點「內建音源：/plugins/whymusic.js」
+A: 正常 —— app 出廠不帶音源。到「設置」頁，點「內建音源：/plugins/whymusic.js」
 把網址填入，按「安裝」即可。裝過一次會存進 localStorage，之後開啟自動載入。
 
 **Q: 所有 `/api/*` 都回 HTML，首頁卻正常？**
@@ -281,18 +295,13 @@ A: 部分曲目在兩個子音源都取不到可播的音源。若某個子源�
 **Q: 音頻播到一半斷？**
 A: 自建版檢查 nginx 有沒有 `proxy_buffering off;`。
 
-**Q: 能搜 YouTube 嗎？**
-A: 不能。YouTube 的 player API 現在對所有 client 都要求 PoToken/BotGuard，
-三種部署方式都一樣。程式碼保留了分支，待日後接上即可恢復。
-
 **Q: 怎麼確認線上跑的是哪一版？**
-A: 比對前端資源檔名 —— 那是內容雜湊：
+A: 「設置」頁底部的「版本」區塊會顯示前端與後端各自的建置戳記。兩者應一致；
+不一致代表只部署了一半（例如前端上去了但後端沒有），而不是快取問題。
+也可以直接問後端：
 ```bash
-pnpm build
-ls packages/web/dist/assets/                       # 本地
-curl -s https://你的站/ | grep -o 'assets/index-[^"]*'   # 線上
+curl -s https://你的站/api/version
 ```
-對得上就是同一版。
 
 ---
 
@@ -300,13 +309,11 @@ curl -s https://你的站/ | grep -o 'assets/index-[^"]*'   # 線上
 
 | 問題 | 原因 | 解決 |
 |------|------|------|
-| 搜尋顯示「需要音源」 | 還沒安裝音源 | 「音源」頁貼 `/plugins/whymusic.js` 安裝 |
+| 搜尋顯示「需要音源」 | 還沒安裝音源 | 「設置」頁貼 `/plugins/whymusic.js` 安裝 |
 | `/api/*` 回 HTML | `_worker.js` 沒部署 | 用 `pnpm build:cf` 重新部署 |
 | `/plugins/*.js` 404 | 漏傳 `plugins/` | 補上，或設 `PLUGINS_DIR` |
-| 播放回 `1003 Invalid signature` | Audiomack key/secret 不成對 | 整組不設，用預設值 |
 | 播放中斷 | nginx 緩衝沒關 | 加 `proxy_buffering off;` |
 | 重開機後站掛掉 | 服務沒設開機自啟 | `systemctl enable` / `rc-update add` |
-| 手機版底部被裁掉 | 舊版用 `100vh` | 已改用 `100dvh`，更新到最新版 |
 
 ---
 
