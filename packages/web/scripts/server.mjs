@@ -74,7 +74,7 @@ function sweepExpiredSyncCodes() {
 // ── OAuth 1.0 Configuration ────────────────────────────────────────
 // Load from environment variables. Defaults are Audiomack's public
 // example credentials — replace in production via .env or env vars.
-// 使用 Audiomack 官方公開的 consumer key/secret（MusicFree 原版插件同款）。
+// 使用 Audiomack 官方公開的 consumer key/secret。
 // 可用環境變量覆蓋。
 const AUDIOMACK_SEARCH_CONSUMER_KEY =
   process.env.AUDIOMACK_SEARCH_CONSUMER_KEY || 'audiomack-js'

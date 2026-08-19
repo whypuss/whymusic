@@ -17,11 +17,11 @@ export interface MusicItem {
   url?: string
   /** 搜索質量 */
   quality?: string
-  /** MusicFree 原生：歌手名（兼容） */
+  /** 歌手名的別名。不同音源用的欄位名不一致，兩種都收 */
   artistName?: string
-  /** MusicFree 原生：封面圖（兼容） */
+  /** 封面圖的別名。同上 */
   cover?: string
-  /** MusicFree 原生：歌曲 ID（兼容） */
+  /** 歌曲 ID 的別名。同上 */
   songmid?: string
   /** 項目類型：歌曲 / 專輯 / 歌單 / 歌手 */
   type?: 'music' | 'album' | 'sheet' | 'artist'
@@ -54,7 +54,7 @@ export interface MusicItem {
 }
 
 /**
- * 搜索結果（MusicFree 原生格式）
+ * 搜尋結果
  */
 export interface SearchResults {
   data: MusicItem[]
@@ -73,8 +73,7 @@ export interface MediaSource {
 }
 
 /**
- * 插件定義（MusicFree 原生格式）
- * search 返回 SearchResults（與 MusicFree 原生一致）
+ * 插件定義。module.exports 出這些方法就是一個音源。
  */
 export interface Plugin {
   platform: string
@@ -86,7 +85,7 @@ export interface Plugin {
   cacheControl?: string
   instance?: any
   supportedMethods?: Set<string>
-  /** 搜索歌曲（返回 MusicFree 原生格式 {data, isEnd}） */
+  /** 搜尋歌曲，回 { data, isEnd } */
   search?(query: string, page?: number, type?: SearchType): Promise<SearchResults>
   /** 獲取音源 URL */
   getMediaSource?(item: MusicItem, quality?: string): Promise<MediaSource>

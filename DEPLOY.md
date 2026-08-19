@@ -169,7 +169,7 @@ sudo chmod 600 /etc/whymusic.env
 | `PLUGINS_DIR` | repo 的 `plugins/` | 音源插件目錄 |
 | `WHY_MUSIC_SOURCES` | `netease,joox` | 啟用的子音源 |
 | `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子源適用） |
-| `GD_API_URL` | `https://music-api.gdstudio.xyz/api.php` | GD 上游位址 |
+| `GD_API_URL` | 見 `plugins/whymusic.js` | 後端側音源用的上游位址 |
 | `SYNC_DIR` | repo 的 `.sync/` | 裝置配對碼的暫存目錄 |
 | `BUILD_STAMP` | 啟動時問 git | 建置戳記。從本機上傳（機器上沒有 git 工作區）時要傳，否則版本區塊會誤報前後端不一致 |
 

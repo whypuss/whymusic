@@ -1,240 +1,31 @@
 import { Plugin } from '../types'
-import CryptoJS from 'crypto-js'
 
-// ====== MusicFree 原生 packages polyfill ======
-// 完全照搬原項目 src/core/pluginManager/plugin.ts 的 packages 對象
+/**
+ * 插件執行環境。
+ *
+ * 一支插件就是一份 CommonJS 程式碼：`module.exports` 出幾個方法（`search`、
+ * `getMediaSource`、`getLyric`…）就是一個音源。這裡用 `new Function` 建一個沙箱，
+ * 只把明確列出的東西交給它 —— 沒有 `window`、沒有 `document`、沒有 `localStorage`，
+ * 插件碰不到頁面狀態，也拿不到其他插件的東西。
+ *
+ * 沙箱刻意很小：插件要什麼自己用 `fetch` 去拿。曾經為了讓某個生態的現成插件能跑，
+ * 這裡塞過 axios / crypto-js / dayjs / qs / he / big-integer / cheerio 七個 shim，
+ * 還有一份「哪些網域要走代理」的清單。那些東西沒有一個是本專案的音源用得到的
+ * （`plugins/whymusic.js` 只用原生 fetch），全部移除 —— 少一層猜測，插件行為就少一個
+ * 說不清楚的地方。要代理的插件自己打 `/api/proxy`，那是明講的，不是我們替它決定的。
+ */
 
-// ====== Request Classifier ======
-// 按請求分流，而不是按插件分流（核心架構修復）
-
-type RequestType = 'oauth' | 'public' | 'backend' | 'direct'
-
-// YouTube 和 猫耳FM 的搜索 API 不支持 CORS，需要走代理
-const PUBLIC_DOMAINS = [
-  // YouTube 搜索 API (CORS 不支持，需要代理)
-  'youtube.com',
-  'www.youtube.com',
-  'youtu.be',
-  'youtubei.googleapis.com',
-  'googleapis.com',
-  'googlevideo.com',
-  'rr1---sn-*.googlevideo.com',
-  // 猫耳FM 搜索 API (CORS 不支持，需要代理)
-  'www.missevan.com',
-  'missevan.com',
-  // 猫耳FM 音頻 CDN (HLS audio segments)
-  'sound-aka-cdn-ov.maoercdn.com',
-  'maoercdn.com',
-  // SoundCloud 需要代理（CORS 不允许）
-  'api.soundcloud.com',
-  'soundcloud.com',
-  // Suno
-  'suno.ai',
-  'studio-api.suno.ai',
-  'cdn1.suno.ai',
-  // Udio
-  'udio.com',
-  'www.udio.com',
-  'api.udio.com',
-  // 音悦台
-  'yinyuetai.com',
-  'api.yinyuetai.com',
-  // 歌词网
-  'geciwang.com',
-  'api.geciwang.com',
-  // 歌词千寻
-  'geciqianxun.com',
-  'api.geciqianxun.com',
-]
-
-const DIRECT_DOMAINS: string[] = []
-
-const BACKEND_PREFIX = '/api/'
-
-function classifyRequest(url: string, headers?: Record<string, string>): RequestType {
-  // 檢查 Authorization 頭 → OAuth signed 請求
-  if (headers?.Authorization || headers?.authorization) {
-    return 'oauth'
-  }
-  // 檢查 URL → backend API
-  if (url.startsWith(BACKEND_PREFIX)) {
-    return 'backend'
-  }
-  // YouTube 搜尋 API 需要代理（CORS 封鎖）
-  try {
-    const domain = new URL(url).hostname.toLowerCase()
-    if (DIRECT_DOMAINS.some(d => domain.includes(d))) {
-      return 'direct'
-    }
-  } catch {
-    // 不是有效 URL，直接通過
-  }
-  // 檢查域名 → public API（YouTube、猫耳FM 等需要代理）
-  try {
-    const domain = new URL(url).hostname.toLowerCase()
-    if (PUBLIC_DOMAINS.some(d => domain.includes(d))) {
-      return 'public'
-    }
-  } catch {
-    // 不是有效 URL，直接通過
-  }
-  // 預設直接請求
-  return 'direct'
-}
-
-// ====== Proxy Policy Engine ======
-// per-request 代理決策，不是全局開關
-
-// 使用自己的 Cloudflare Functions proxy（支援 POST/PUT 等任何方法）
-const CORS_PROXY = '/api/proxy?url='
-
-function shouldProxy(url: string, type: RequestType): boolean {
-  switch (type) {
-    case 'oauth':
-    case 'backend':
-      return false // OAuth 簽名禁止改 URL，backend 不需要代理
-    case 'public':
-      return true  // Public API 必須跨域代理
-    default:
-      return false
-  }
-}
-
-function getProxyUrl(url: string, type: RequestType, method?: string): string {
-  if (shouldProxy(url, type)) {
-    const m = method || 'GET'
-    return CORS_PROXY + encodeURIComponent(url) + '&method=' + m
-  }
-  return url
-}
-
-// ====== Axios polyfill ======
-const axios = (function() {
-  function axiosFn(config: any) {
-    let url = config.url || config
-    // 支持 query 參數（plugins 常用 .get(..., { params: {...} })）
-    if (config.params) {
-      const params = new URLSearchParams()
-      for (const [k, v] of Object.entries(config.params)) {
-        if (v !== undefined && v !== null) params.set(k, String(v))
-      }
-      const separator = url.includes('?') ? '&' : '?'
-      url = url + separator + params.toString()
-    }
-    // GET 請求可以帶 data（某些插件這麼用）
-    let body: string | undefined
-    if (['POST', 'PUT', 'PATCH'].includes((config.method || 'GET').toUpperCase()) && config.data) {
-      body = typeof config.data === 'string' ? config.data : JSON.stringify(config.data)
-    }
-    // Request classification + proxy policy
-    const headers = config.headers || {}
-    const reqType = classifyRequest(url, headers)
-    const requestUrl = getProxyUrl(url, reqType, config.method || 'GET')
-    return fetch(requestUrl, {
-      method: config.method || 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers,
-      },
-      body,
-    }).then(async (res) => {
-      const headers: Record<string, string> = {}
-      res.headers.forEach((v, k) => { headers[k] = v })
-      // 先讀 text，再嘗試 parse JSON（避免 body stream 被消費兩次）
-      const text = await res.text()
-      let data: any
-      try {
-        data = JSON.parse(text)
-      } catch {
-        data = text
-      }
-      if (!res.ok) {
-        console.error(`[axios] Request failed: ${requestUrl} (${res.status})`, data)
-      }
-      return {
-        status: res.status,
-        statusText: res.statusText,
-        headers,
-        config,
-        data,
-      }
-    }).catch((err) => {
-      console.error(`[axios] Fetch error: ${url}`, err)
-      return { status: 0, statusText: 'Network Error', headers: {}, config, data: null }
-    })
-  }
-  axiosFn.get = (url: string, config?: any) => axiosFn({ ...config, url, method: 'GET' })
-  axiosFn.post = (url: string, data?: any, config?: any) => axiosFn({ ...config, url, method: 'POST', data })
-  axiosFn.put = (url: string, data?: any, config?: any) => axiosFn({ ...config, url, method: 'PUT', data })
-  axiosFn.delete = (url: string, config?: any) => axiosFn({ ...config, url, method: 'DELETE' })
-  axiosFn.patch = (url: string, data?: any, config?: any) => axiosFn({ ...config, url, method: 'PATCH', data })
-  axiosFn.defaults = { timeout: 2000 }
-  axiosFn.create = () => axiosFn
-  axiosFn.interceptors = { response: { use: () => ({ detach: () => {} }) } }
-  return axiosFn
-})()
-
-// ====== Packages polyfill ======
-const packages: Record<string, any> = {
-  axios,
-  'crypto-js': CryptoJS,
-  dayjs: (date?: any) => {
-    const d = date ? new Date(date) : new Date()
-    return {
-      format: (fmt: string) => {
-        const pad = (n: string | number) => { const s = String(n); return s.length === 1 ? '0' + s : s }
-        return fmt
-          .replace('YYYY', String(d.getFullYear()))
-          .replace('MM', pad(d.getMonth() + 1))
-          .replace('DD', pad(d.getDate()))
-          .replace('HH', pad(d.getHours()))
-          .replace('mm', pad(d.getMinutes()))
-          .replace('ss', pad(d.getSeconds()))
-      },
-    }
-  },
-  qs: {
-    parse: (str: string) => {
-      const params = new URLSearchParams(str)
-      const obj: Record<string, any> = {}
-      for (const [k, v] of params) { obj[k] = v }
-      return obj
-    },
-    stringify: (obj: Record<string, any>) => {
-      const params = new URLSearchParams()
-      for (const [k, v] of Object.entries(obj)) { params.set(k, String(v)) }
-      return params.toString()
-    },
-  },
-  he: {
-    encode: (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
-    decode: (str: string) => str.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&'),
-  },
-  'big-integer': {},
-  cheerio: {
-    load: (html: string) => {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(html, 'text/html')
-      return {
-        selector: (sel: string) => doc.querySelectorAll(sel),
-        find: (sel: string) => doc.querySelectorAll(sel),
-        eq: (i: number) => doc.querySelectorAll('*')[i],
-        text: () => doc.body.innerText,
-        html: () => doc.body.innerHTML,
-        attr: (name: string) => doc.body.getAttribute(name),
-      }
-    },
-  },
-  webdav: {},
-}
-
+/**
+ * 未提供的模組要明確拋錯。
+ *
+ * 原本這裡對不認識的模組回一個空物件 `{}`，結果插件會在後面某個地方以
+ * 「`undefined` is not a function」之類的訊息炸掉，完全看不出真正的原因是缺模組。
+ */
 const _require = (packageName: string) => {
-  let pkg = packages[packageName]
-  if (!pkg) {
-    pkg = {}
-  }
-  pkg.default = pkg
-  return pkg
+  throw new Error(
+    `插件要求模組「${packageName}」，但這個播放器的沙箱不提供任何模組。` +
+    `插件請改用原生 fetch；需要跨域代抓時打 /api/proxy?url=<目標>。`,
+  )
 }
 
 const _console = {
@@ -244,68 +35,20 @@ const _console = {
   error: (...args: any[]) => console.error(...args),
 }
 
-const appVersion = '1.0.0'
-
-function formatAuthUrl(url: string) {
-  try {
-    const urlObj = new URL(url)
-    if (urlObj.username && urlObj.password) {
-      const auth = `Basic ${btoa(decodeURIComponent(urlObj.username) + ':' + decodeURIComponent(urlObj.password))}`
-      urlObj.username = ''
-      urlObj.password = ''
-      return { url: urlObj.toString(), auth }
-    }
-    return { url }
-  } catch (e) {
-    return { url }
-  }
-}
-
-// ====== PluginRunner ======
 export class PluginRunner {
   static load(code: string): Plugin {
-    // 為每個插件創建獨立的 fetch sandbox（isolation boundary）
-    const createProxiedFetch = () => {
-      const originalFetch = fetch
-      return async (input: RequestInfo | URL, init?: RequestInit) => {
-        let url: string
-        if (typeof input === 'string') {
-          url = input
-        } else if (input instanceof Request) {
-          url = input.url
-        } else {
-          url = String(input)
-        }
-        const headers = (init?.headers as Record<string, string>) || {}
-        const reqType = classifyRequest(url, headers)
-        const method = init?.method || 'GET'
-        let requestUrl = getProxyUrl(url, reqType, method)
-        const proxyInput = requestUrl !== url ? requestUrl : input
-        const response = await originalFetch(proxyInput, init)
-        // 修復 CORS 代理後 headers 中 location 指向原始 URL 的問題
-        const newResponse = new Response(response.body, response)
-        return newResponse
-      }
-    }
-
-    const proxiedFetch = createProxiedFetch()
-
     const sandbox = {
       module: { exports: {} },
       exports: {},
       require: _require,
-      packages,
-      _require,
-      _console,
-      appVersion,
-      formatAuthUrl,
       setTimeout,
       clearTimeout,
       setInterval,
       clearInterval,
       Promise,
-      fetch: proxiedFetch,
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
       URL,
+      URLSearchParams,
       btoa: (str: string) => btoa(str),
       atob: (str: string) => atob(str),
       console: _console,

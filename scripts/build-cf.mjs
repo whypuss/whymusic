@@ -27,7 +27,7 @@ const run = (cmd, args, cwd) =>
 console.log(`▸ 建置戳記：${stamp}`)
 
 // 1) 前端（vite 會讀 BUILD_STAMP）
-run('pnpm', ['--filter', '@musicfree/web', 'build'])
+run('pnpm', ['--filter', '@whymusic/web', 'build'])
 
 // 2) worker → dist/_worker.js（同樣讀 BUILD_STAMP）
 run('node', [path.join(ROOT, 'scripts/build-worker.mjs')])

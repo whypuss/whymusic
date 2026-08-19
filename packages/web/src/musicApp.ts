@@ -15,7 +15,7 @@ export const pluginManager = new PluginManager()
  * GitHub 仍是這支插件在版控裡的位置，但只在部署時參與，不在執行時。
  *
  * 插件呼叫本站後端的 /api/why-* 端點（子音源扇出、OAuth 簽名、跨源救援都在
- * 後端），所以它只能配 musicweb 使用，貼到別的 MusicFree 客戶端不會動。
+ * 後端），所以它是為這個播放器寫的，貼到別的客戶端不一定能動。
  */
 export const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
 export const OFFICIAL_PLUGIN_URL = '/plugins/whymusic.js'

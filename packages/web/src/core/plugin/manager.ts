@@ -4,7 +4,7 @@ import { PluginRunner } from './runner'
 /**
  * 把插件回傳的各種形狀統一成陣列。
  *
- * MusicFree 插件的回傳格式不只一種：search 回 { isEnd, data }，而
+ * 插件的回傳格式不只一種：search 回 { isEnd, data }，而
  * getAlbumInfo / getMusicSheetInfo 回 { musicList }，各類搜尋另有
  * albumList / artistList / sheetList。只認 data 會讓一半的方法靜默回空。
  */
@@ -19,7 +19,6 @@ function normalizeItemList(result: any): any[] {
 
 /**
  * 插件管理器
- * 完全照搬原項目 MusicFree 的實現邏輯
  */
 export class PluginManager {
   private plugins: Plugin[] = []
@@ -28,7 +27,7 @@ export class PluginManager {
   /**
    * 載入插件並回傳實際註冊的名稱。
    *
-   * 名稱優先採用插件自己宣告的 platform（MusicFree 插件宣告的是 platform
+   * 名稱優先採用插件自己宣告的 platform（插件宣告的是 platform
    * 而非 name），呼叫端傳入的 name 只當後備。這樣使用者從 URL 安裝時不必
    * 手填名稱，也避免手填值與插件回傳 item.platform 不一致導致搜尋派發失敗。
    * 回傳名稱是必要的：註冊名可能與傳入的 name 不同，啟用時要用實際的那個。
@@ -193,7 +192,7 @@ export class PluginManager {
   }
 
   /**
-   * 推薦歌曲。musicweb 擴充介面（非 MusicFree 標準），插件未實作時回 null，
+   * 推薦歌曲。本專案擴充的介面，插件未實作時回 null，
    * 讓 UI 能明確告知「此音源不支援推薦」而不是顯示空清單。
    */
   async getRecommendForPlugin(
@@ -220,9 +219,9 @@ export class PluginManager {
   }
 
   /**
-   * 獲取音源 URL - 完全照搬原項目 getMediaSource 邏輯
+   * 取音源 URL。
    * 原項目：{ url, headers, userAgent }
-   * 原項目：如果沒有 getMediaSource，直接返回 musicItem.url
+   * 插件沒有實作 getMediaSource 時，退回用 musicItem.url。
    */
   // 錯誤往外丟（不再 catch 成 null）：播放失敗的原因只有插件知道，
   // 吞掉之後 UI 只能說「無法獲取音源」，使用者與開發者都無從判斷。
