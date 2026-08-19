@@ -120,14 +120,16 @@ function EmptyState({ text }: { text: string }) {
 export default function AppleUI({ app }: { app: MusicApp }) {
   const {
     albumDetail, albumLoading, albumTracks, applySyncCode, createSyncCode,
-    currentTime, currentView, cyclePlayMode, duration, favorites,
+    currentTime, currentView, cyclePlayMode, duration, exportFavorites, favorites,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
-    hasMore, installPluginFromURL, isFavorite, isPlaying, keyword, loadMore, loading,
+    hasMore, importBusy, importFavorites, importProgress, importText, installPluginFromURL,
+    isFavorite, isPlaying, keyword, loadMore, loading,
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
     recommendSongs, recommendUnsupported, removePlugin, results, search,
     searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
-    setSearchPage, setSearchType, setSyncInput, switchRecommendMode, syncAvailable, syncBusy,
+    setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendMode,
+    syncAvailable, syncBusy,
     syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
   } = app
 
@@ -136,7 +138,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     { key: 'recommend' as const, label: '推薦' },
     { key: 'search' as const, label: '搜尋' },
     { key: 'favorites' as const, label: '收藏' },
-    { key: 'plugins' as const, label: '音源' },
+    { key: 'plugins' as const, label: '設置' },
   ]
   // 內建與第三方音源不再分開列 —— 安裝方式統一成貼網址，區分它們沒有意義了。
   // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
@@ -219,7 +221,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
               {recommendLoading && recommendSongs.length === 0 && <EmptyState text="載入中…" />}
               {!recommendLoading && recommendSongs.length === 0 && (
                 <EmptyState text={recommendUnsupported
-                  ? '推薦需要音源，請到「音源」頁安裝。'
+                  ? '推薦需要音源，請到「設置」頁安裝。'
                   : '尚無推薦曲目。'} />
               )}
               <div className="divide-y divide-white/[0.06]">
@@ -248,7 +250,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 </p>
               </div>
               {favorites.length === 0 && (
-                <EmptyState text="還沒有收藏。點曲目右邊的心心加進來。" />
+                <EmptyState text="還沒有收藏。點曲目右邊的心心加進來，或到「設置」頁匯入歌單。" />
               )}
               <div className="divide-y divide-white/[0.06]">
                 {favorites.map(item => (
@@ -301,7 +303,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
               {loading && <EmptyState text="搜尋中…" />}
               {!loading && results.length === 0 && (
                 <EmptyState text={pluginManager.getEnabledPlugins().length === 0
-                  ? '搜尋需要音源，請到「音源」頁安裝。'
+                  ? '搜尋需要音源，請到「設置」頁安裝。'
                   : keyword.trim() ? '找不到符合的結果。' : '輸入關鍵字開始搜尋。'} />
               )}
               <div className="divide-y divide-white/[0.06]">
@@ -379,11 +381,11 @@ export default function AppleUI({ app }: { app: MusicApp }) {
             </>
           )}
 
-          {/* ── 音源 ── */}
+          {/* ── 設置 ── */}
           {currentView === 'plugins' && (
             <div className="px-4 pt-8 pb-4">
-              <h1 className="text-[34px] font-bold tracking-tight leading-tight">音源</h1>
-              <p className="text-[15px] text-white/45 mt-0.5">安裝音源後才能搜尋與播放</p>
+              <h1 className="text-[34px] font-bold tracking-tight leading-tight">設置</h1>
+              <p className="text-[15px] text-white/45 mt-0.5">音源、歌單與同步</p>
 
               {pluginError && (
                 <div className="mt-5 p-3.5 rounded-[12px] bg-[#FF453A]/15 border border-[#FF453A]/30">
@@ -465,6 +467,68 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   {installedPlugins.length === 0 && (
                     <div className="px-4 py-6 text-center text-[14px] text-white/30">尚無音源</div>
                   )}
+                </div>
+              </div>
+
+              {/*
+                歌單匯出／匯入。匯出成 Markdown：任何文字編輯器、筆記軟體、聊天
+                視窗都能直接看，這是「越通用越好」的意思。檔尾另藏一段 HTML 註解
+                裡的 JSON，Markdown 算繪時看不到，但匯入本站時能精確還原、不必
+                逐首重新搜尋 —— 給人看的通用格式與給程式看的精確還原不必二選一。
+                匯入也吃任何純文字清單（「歌名 - 歌手」一行一首），那才是別人給
+                你一串歌時真正用得到的路徑。
+              */}
+              <div className="mt-6">
+                <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                  歌單
+                </div>
+                <div className="rounded-[14px] bg-white/[0.07] p-4 space-y-4">
+                  <div>
+                    <button onClick={exportFavorites} disabled={favorites.length === 0}
+                      className="w-full py-3 rounded-[11px] bg-white/15 text-[15px] font-medium
+                                 active:opacity-70 disabled:opacity-40 transition">
+                      匯出收藏（.md）
+                    </button>
+                    <div className="text-[12px] text-white/40 mt-2 px-1">
+                      {favorites.length > 0
+                        ? `目前 ${favorites.length} 首。純文字格式，任何地方都打得開。`
+                        : '還沒有收藏可以匯出。'}
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-white/[0.08]" />
+
+                  <div className="space-y-2">
+                    <textarea value={importText} onChange={e => setImportText(e.target.value)}
+                      rows={4} spellCheck={false}
+                      placeholder={'貼上歌單，一行一首：\n月亮代表我 — moon tang\n或直接選擇匯出的 .md 檔'}
+                      className="w-full px-4 py-3 rounded-[11px] bg-white/[0.07] text-[14px]
+                                 placeholder:text-white/30 outline-none focus:bg-white/10 transition
+                                 resize-none leading-relaxed" />
+                    <div className="flex gap-2">
+                      <label className="flex-1 py-3 rounded-[11px] bg-white/15 text-[15px] font-medium
+                                        text-center cursor-pointer active:opacity-70 transition">
+                        選擇檔案
+                        <input type="file" accept=".md,.txt,text/*" className="hidden"
+                          onChange={async e => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            setImportText(await file.text())
+                            // 清掉 value，選同一個檔案第二次才會再觸發 change
+                            e.target.value = ''
+                          }} />
+                      </label>
+                      <button onClick={() => importFavorites(importText)}
+                        disabled={importBusy || !importText.trim()}
+                        className="flex-1 py-3 rounded-[11px] bg-[#0A84FF] text-[15px] font-medium
+                                   active:opacity-70 disabled:opacity-40 transition">
+                        {importBusy ? `比對中 ${importProgress}` : '匯入收藏'}
+                      </button>
+                    </div>
+                    <div className="text-[12px] text-white/40 px-1">
+                      純文字清單會逐首用音源搜尋比對，找不到的會列出來。
+                    </div>
+                  </div>
                 </div>
               </div>
 

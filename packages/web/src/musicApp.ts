@@ -258,6 +258,10 @@ export function useMusicApp() {
   const [syncCode, setSyncCode] = useState<string | null>(null)
   const [syncInput, setSyncInput] = useState('')
   const [syncBusy, setSyncBusy] = useState(false)
+  /** 匯入歌單的進度（「3 / 20」）。純文字清單要逐首搜尋，會跑一陣子 */
+  const [importBusy, setImportBusy] = useState(false)
+  const [importProgress, setImportProgress] = useState('')
+  const [importText, setImportText] = useState('')
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
@@ -880,6 +884,190 @@ export function useMusicApp() {
     })
   }
 
+  /**
+   * 匯出收藏成 Markdown。
+   *
+   * 格式刻意做成人看得懂的清單，任何文字編輯器、筆記軟體、聊天視窗都能直接用 ——
+   * 這是「越通用越好」的意思。檔尾另外藏一段 HTML 註解裡的精簡 JSON：Markdown
+   * 算繪時看不到，但本站匯入時能直接還原（含 id 與子音源），不必逐首重新搜尋。
+   * 兩者並存 = 給人看的通用格式 + 給程式看的精確還原，不必二選一。
+   */
+  const exportFavorites = () => {
+    if (favorites.length === 0) {
+      showNotification('還沒有收藏可以匯出', 'error')
+      return
+    }
+    const t = new Date()
+    const p = (n: number) => String(n).padStart(2, '0')
+    const when = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`
+    const lines = [
+      '# WhyMusic 收藏',
+      '',
+      `匯出時間：${when}`,
+      `共 ${favorites.length} 首`,
+      '',
+      ...favorites.map((f, i) => `${i + 1}. ${f.title || '未知曲目'} — ${f.artist || '未知歌手'}`),
+      '',
+      '<!-- whymusic:favorites:v1',
+      // 欄位縮成單字母：這段是給程式看的，沒必要佔滿檔案
+      JSON.stringify(favorites.map(f => ({
+        t: f.title, a: f.artist, b: f.album,
+        p: f.platform, i: f.id, s: f.subSource,
+        c: f.picId, l: f.lyricId, w: f.artwork, d: f.duration,
+      }))),
+      '-->',
+      '',
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `whymusic-收藏-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}.md`
+    a.click()
+    // 不立刻 revoke：Safari 有時還沒開始讀就被撤掉，下載會變成空檔
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+    showNotification(`已匯出 ${favorites.length} 首`, 'success')
+  }
+
+  /** 歸一化歌名用於比對：去括號註記、去標點空白、轉小寫 */
+  const normalizeTitle = (text: string) =>
+    String(text || '')
+      .toLowerCase()
+      .replace(/[（([【].*?[)）\]】]/g, '')
+      .replace(/[\s\-_·・,，.。!！?？'"'"、/\\|&+]/g, '')
+
+  /**
+   * 匯入歌單到收藏。
+   *
+   * 兩條路：
+   *   1) 檔尾有本站的 JSON 註解 → 直接還原，精確且不必連網
+   *   2) 沒有 → 當成純文字清單逐行解析，再用音源搜尋把每首找回來。這條路才是
+   *      重點：別人給你的一串「歌名 - 歌手」、從別的軟體匯出的清單都能吃進來。
+   *
+   * 搜尋是循序做的，不並發：上游按 IP 限流，一次噴幾十個請求容易被擋，而使用者
+   * 寧可等幾秒也不要匯入一半失敗。
+   */
+  const importFavorites = async (text: string) => {
+    const raw = String(text || '').trim()
+    if (!raw) {
+      showNotification('請先貼上歌單內容或選擇檔案', 'error')
+      return
+    }
+
+    const addAll = (items: MusicItem[]) => {
+      let added = 0
+      setFavorites(prev => {
+        const seen = new Set(prev.map(f => `${f.platform || ''}::${f.id}`))
+        const next = [...prev]
+        for (const it of items) {
+          const key = `${it.platform || ''}::${it.id}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          next.push(it)
+          added++
+        }
+        try {
+          localStorage.setItem(STORAGE_FAVORITES, JSON.stringify(next))
+        } catch (e) {
+          console.error('[favorites] 寫入失敗:', e)
+        }
+        return next
+      })
+      return added
+    }
+
+    // ── 路徑 1：本站匯出的檔案 ──
+    const embedded = raw.match(/<!--\s*whymusic:favorites:v1\s*([\s\S]*?)-->/)
+    if (embedded) {
+      try {
+        const parsed = JSON.parse(embedded[1].trim())
+        const items: MusicItem[] = parsed.map((x: any) => ({
+          id: String(x.i), title: x.t || '', artist: x.a || '', album: x.b || '',
+          platform: x.p || OFFICIAL_PLUGIN_NAME, subSource: x.s || '',
+          picId: x.c || '', lyricId: x.l || '', artwork: x.w || '',
+          duration: x.d || 0, type: 'music',
+        }))
+        const added = addAll(items)
+        showNotification(
+          added > 0 ? `已匯入 ${added} 首（檔案內含完整資料）` : '這些曲目都已經在收藏裡',
+          'success',
+        )
+        return
+      } catch (e) {
+        console.error('[import] 內嵌資料解析失敗，改用文字解析:', e)
+      }
+    }
+
+    // ── 路徑 2：純文字清單 ──
+    const plugin = pluginManager.getEnabledPlugins()[0]
+    if (!plugin) {
+      showNotification('純文字歌單需要音源才能比對，請先安裝音源', 'error')
+      return
+    }
+    const sourceName = plugin.name
+
+    const entries: { title: string; artist: string }[] = []
+    for (const line of raw.split('\n')) {
+      let s = line.trim()
+      if (!s) continue
+      if (s.startsWith('#')) continue                    // 標題
+      if (s.startsWith('<!--') || s.startsWith('-->')) continue
+      if (/^(匯出時間|导出时间|共\s*\d+\s*首)/.test(s)) continue
+      s = s.replace(/^\s*(?:\d+\s*[.)、]|[-*+•])\s*/, '')  // 編號或項目符號
+      if (!s) continue
+      // 常見的分隔：破折號、連字號、tab、by
+      const m = s.split(/\s+[—–]\s+|\s+-\s+|\t+|\s+by\s+/i)
+      const title = (m[0] || '').trim()
+      const artist = (m[1] || '').trim()
+      if (title) entries.push({ title, artist })
+      if (entries.length >= 200) break                   // 上限，別讓人貼一整本書進來
+    }
+    if (entries.length === 0) {
+      showNotification('看不出這份內容裡有歌曲', 'error')
+      return
+    }
+
+    setImportBusy(true)
+    setImportProgress(`0 / ${entries.length}`)
+    const found: MusicItem[] = []
+    const missing: string[] = []
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        setImportProgress(`${i + 1} / ${entries.length}`)
+        try {
+          // 用 searchForPlugin 而不是自己呼叫插件：它會補上 platform，
+          // 而收藏的判斷鍵就是 platform + id，少了它會變成 undefined::123
+          const list = await pluginManager.searchForPlugin(
+            sourceName, [e.title, e.artist].filter(Boolean).join(' '), 'music', 1,
+          )
+          const wantT = normalizeTitle(e.title)
+          const wantA = normalizeTitle(e.artist)
+          const hit = list.find(c => {
+            const ct = normalizeTitle(c.title)
+            if (!ct || (ct !== wantT && !ct.startsWith(wantT) && !wantT.startsWith(ct))) return false
+            if (!wantA) return true
+            const ca = normalizeTitle(c.artist)
+            return !ca || ca.includes(wantA) || wantA.includes(ca)
+          })
+          if (hit) found.push(hit)
+          else missing.push(e.artist ? `${e.title} — ${e.artist}` : e.title)
+        } catch {
+          missing.push(e.artist ? `${e.title} — ${e.artist}` : e.title)
+        }
+      }
+      const added = addAll(found)
+      // 明確講出找不到的那幾首。只說「匯入了 8 首」的話，使用者不知道少了什麼
+      const tail = missing.length > 0
+        ? `，${missing.length} 首找不到：${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}`
+        : ''
+      showNotification(`已匯入 ${added} 首${tail}`, missing.length > 0 ? 'info' : 'success')
+    } finally {
+      setImportBusy(false)
+      setImportProgress('')
+    }
+  }
+
   const handleItemClick = (item: MusicItem) => {
     if (item.type === 'album' || item.type === 'sheet') {
       // 專輯/歌單：顯示專輯詳情
@@ -1145,6 +1333,12 @@ export function useMusicApp() {
     applySyncCode,
     createSyncCode,
     favorites,
+    exportFavorites,
+    importFavorites,
+    importBusy,
+    importProgress,
+    importText,
+    setImportText,
     isFavorite,
     toggleFavorite,
     syncAvailable,
