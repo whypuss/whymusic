@@ -2,6 +2,7 @@
   "appId": "xyz.whymusic.app",
   "appName": "WhyMusic",
   "webDir": "packages/web/dist",
+  "backgroundColor": "#000000",
   "android": {
     "allowMixedContent": true
   },

@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { isNative } from './core/native'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -36,13 +37,18 @@ function isIOS(): boolean {
  */
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    if (isIOS()) {
+    if (isIOS() || isNative()) {
+      // App 版（Capacitor）不需要 SW：SW 的唯一目的是讓 Chrome 產生 WebAPK，
+      // 而 APK 本身就是原生應用。留著它反而每個本地資產都要繞道 fetch handler
+      // 再寫一次 Cache API —— 實測讓本機 JS 檔載入多花一秒以上，冷啟動變慢一截；
+      // 它快取的舊 index.html 還會蓋住新版前端（LOAD_NO_CACHE 清不到 SW 的快取）。
+      // 與 iOS 一樣要主動反註冊：舊版 APK 已經裝上的 SW 會一直留著。
       // iOS 16.4+ 的 Safari 會讀 manifest 的 display，加到主畫面就會變成獨立模式
       // —— 而獨立模式在 iOS 上鎖屏播不下去（詳見 index.html 的註解）。把連結移掉，
       // 「加到主畫面」就只做成一個開 Safari 的捷徑。Android 要靠這個 manifest 安裝，
       // 所以只在 iOS 移除。iOS 讀 manifest 的時機是使用者按「加到主畫面」的當下，
       // 晚於頁面載入，所以在這裡移除來得及。
-      document.querySelector('link[rel="manifest"]')?.remove()
+      if (isIOS()) document.querySelector('link[rel="manifest"]')?.remove()
 
       void (async () => {
         try {
@@ -53,9 +59,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
             const names = await caches.keys()
             await Promise.all(names.map(n => caches.delete(n)))
           }
-          if (regs.length > 0) console.log(`[sw] iOS：已反註冊 ${regs.length} 個 SW`)
+          if (regs.length > 0) console.log(`[sw] 已反註冊 ${regs.length} 個 SW`)
         } catch (err) {
-          console.warn('[sw] iOS 反註冊失敗:', err)
+          console.warn('[sw] 反註冊失敗:', err)
         }
       })()
       return

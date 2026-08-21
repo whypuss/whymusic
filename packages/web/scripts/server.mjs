@@ -882,6 +882,20 @@ async function getWhyMusicPic(picId, source, size = 500) {
 }
 
 /** 推薦頁：香港叱咤903榜單（回應自帶封面，無需逐首取圖） */
+/**
+ * 網易雲圖床支援 ?param=寬y高 取縮圖。榜單封面原圖一張 2~3MB，一頁列表
+ * 幾十張就是幾十 MB —— 光封面就能拖垮載入與流量。列表縮圖 300 已夠
+ * Retina 螢幕用；播放中的大圖另走 pic 端點拿高清。順手升 https（圖床
+ * 雙協定都通，http 在網頁版是 mixed content）。
+ */
+function thumbArtwork(picUrl) {
+  const url = String(picUrl || '')
+  if (!url) return ''
+  if (!/\bmusic\.126\.net\//.test(url)) return url
+  return url.replace(/^http:/, 'https:')
+    + (url.includes('?') ? '&' : '?') + 'param=300y300'
+}
+
 /** 網易雲榜單曲目 → 本站 MusicItem（缺 id 或歌名的丟掉） */
 function gdTrackToItem(track) {
   const title = String(track.name || '')
@@ -892,7 +906,7 @@ function gdTrackToItem(track) {
     title,
     artist: (track.ar || track.artists || []).map(a => a.name).filter(Boolean).join(' / '),
     album: String(album.name || ''),
-    artwork: album.picUrl || '',
+    artwork: thumbArtwork(album.picUrl),
     platform: 'WhyMusic',
     subSource: 'netease',
     picId: album.pic_str || (album.pic != null ? String(album.pic) : ''),
