@@ -6,7 +6,7 @@
  * 以留白和層次取代邊框。深色底以 iOS 的近黑（#000 / #1C1C1E）為基調，
  * 不用漸層 —— 平面風的重點是乾淨，不是華麗。
  */
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MusicItem } from './../core'
 import { formatSize } from './../core/downloads'
 import {
@@ -263,6 +263,14 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   // 內建與第三方音源不再分開列 —— 安裝方式統一成貼網址，區分它們沒有意義了。
   // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
   const installedPlugins = useMemo(() => pluginManager.getPlugins(), [pluginKey])
+  /**
+   * 設置頁裡的「已下載歌曲」子頁面。純畫面導覽，所以留在這一層而不是進狀態層。
+   * 切到別的分頁再回來時要回到設置根頁 —— 不然使用者會納悶自己怎麼在子頁面裡。
+   */
+  const [showDownloads, setShowDownloads] = useState(false)
+  useEffect(() => {
+    if (currentView !== 'plugins') setShowDownloads(false)
+  }, [currentView])
 
   return (
     <div
@@ -541,8 +549,76 @@ export default function AppleUI({ app }: { app: MusicApp }) {
             </>
           )}
 
+          {/* ── 設置 › 已下載歌曲 ── */}
+          {currentView === 'plugins' && showDownloads && (
+            <div className="px-4 pt-6 pb-4">
+              <button onClick={() => setShowDownloads(false)}
+                className="flex items-center gap-1 text-[15px] text-[#0A84FF] active:opacity-60 mb-5">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                設置
+              </button>
+              <h1 className="text-[34px] font-bold tracking-tight leading-tight">已下載歌曲</h1>
+              <p className="text-[15px] text-white/45 mt-0.5">
+                {downloads.length} 首 · 存在 App 的儲存空間
+              </p>
+
+              {downloads.length === 0 ? (
+                <EmptyState text="還沒有下載的歌曲。點曲目右邊的下載鈕存到裝置。" />
+              ) : (
+                <>
+                  <div className="mt-6 rounded-[14px] bg-white/[0.07] overflow-hidden
+                                  divide-y divide-white/[0.06]">
+                    {downloads.map(d => (
+                      <div key={d.key} className="p-4 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[15px] truncate">{d.title}</div>
+                          <div className="text-[13px] text-white/45 truncate mt-0.5">
+                            {d.artist || '未知歌手'}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            {/* 顯示**實際**存下來的音質 —— 音源沒有高音質版本時會降級，
+                                寫「你選的那檔」會是騙人的 */}
+                            {d.bitrate && (
+                              <span className="px-1.5 py-0.5 rounded-md bg-[#0A84FF]/20 text-[#0A84FF]
+                                               text-[11px] font-medium tabular-nums">
+                                {d.bitrate} kbps
+                              </span>
+                            )}
+                            <span className="text-[11px] text-white/30 tabular-nums">
+                              {formatSize(d.size)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button onClick={() => exportDownload(d)}
+                            title="匯出" aria-label="匯出"
+                            className="px-3.5 py-1.5 rounded-full bg-white/15 text-[13px] font-medium
+                                       active:opacity-70 transition">
+                            匯出
+                          </button>
+                          <button onClick={() => removeDownload(d)}
+                            title="刪除" aria-label="刪除"
+                            className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A]
+                                       text-[13px] font-medium active:opacity-70 transition">
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
+                    「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {/* ── 設置 ── */}
-          {currentView === 'plugins' && (
+          {currentView === 'plugins' && !showDownloads && (
             <div className="px-4 pt-8 pb-4">
               <h1 className="text-[34px] font-bold tracking-tight leading-tight">設置</h1>
               <p className="text-[15px] text-white/45 mt-0.5">音質、音源、歌單與同步</p>
@@ -550,30 +626,47 @@ export default function AppleUI({ app }: { app: MusicApp }) {
               {/*
                 音質。播放與下載共用同一個設定 —— 選了 999，下載也是 999。
                 五檔是上游實際支援的階梯（見 musicApp 的 QUALITIES）。
+
+                用原生 <select> 而不是自己做選單：收起來只佔一行（原本五列把整個
+                設置頁的第一屏都吃掉了），而且系統選單在手機上的可用性本來就比
+                自製的好 —— 有原生滾輪、鍵盤操作、無障礙支援。
               */}
               <div className="mt-6">
                 <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
                   音質
                 </div>
-                <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
-                  {QUALITIES.map(q => (
-                    <button key={q.value} onClick={() => setQuality(q.value)}
-                      className="w-full px-4 py-3 flex items-center justify-between gap-3
-                                 active:bg-white/10 md:hover:bg-white/[0.06] transition-colors text-left">
-                      <div className="min-w-0">
-                        <div className="text-[15px]">{q.label}</div>
-                        <div className="text-[13px] text-white/40 mt-0.5">{q.hint}</div>
-                      </div>
-                      {/* 打勾標示目前選的，不用 radio —— iOS 的清單慣例是勾 */}
-                      {quality === q.value && (
-                        <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
-                          className="text-[#0A84FF] flex-shrink-0">
-                          <path d="M3 8.5l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.8"
-                            strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </button>
-                  ))}
+                <div className="rounded-[14px] bg-white/[0.07] px-4 py-3
+                                flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[15px]">播放與下載</div>
+                    <div className="text-[13px] text-white/40 mt-0.5">
+                      {QUALITIES.find(q => q.value === quality)?.hint}
+                    </div>
+                  </div>
+                  <div className="relative flex-shrink-0">
+                    <select
+                      value={quality}
+                      onChange={e => setQuality(e.currentTarget.value as typeof quality)}
+                      aria-label="音質"
+                      className="appearance-none bg-white/15 rounded-[10px] pl-3 pr-8 py-2
+                                 text-[15px] tabular-nums outline-none active:opacity-70
+                                 focus:bg-white/20 transition cursor-pointer"
+                    >
+                      {QUALITIES.map(q => (
+                        // 深色底下原生選單的選項由系統算繪，明確給底色才不會白底白字
+                        <option key={q.value} value={q.value} className="bg-[#1C1C1E] text-white">
+                          {q.label}
+                        </option>
+                      ))}
+                    </select>
+                    {/* 自己畫箭頭：appearance-none 之後系統的箭頭就沒了 */}
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none
+                                 text-white/50">
+                      <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6"
+                        strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 </div>
                 <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
                   下載也用這個音質。不是每首歌都有高音質版本，取不到時音源會退到可用的。
@@ -669,57 +762,26 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 你一串歌時真正用得到的路徑。
               */}
               {/*
-                已下載。只有 App 版有這一區 —— 網頁版的下載交給瀏覽器另存，
-                存到哪裡我們無從得知，也就沒有清單可管（見 core/downloads.ts）。
-                每首顯示的是**實際**存下來的音質：音源沒有高音質版本時會降級，
-                寫「你選的那檔」會是騙人的。
+                已下載歌曲的入口。清單放在子頁面而不是攤在這裡 —— 下載多了以後
+                這一頁會被它整個佔滿，而設置頁的主體是設定，不是資料。
+                只有 App 版有清單（網頁版的下載交給瀏覽器另存，存到哪裡我們無從得知）。
               */}
               {downloads.length > 0 && (
                 <div className="mt-6">
-                  <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
-                    已下載 · {downloads.length} 首
-                  </div>
-                  <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
-                    {downloads.map(d => (
-                      <div key={d.key} className="p-4 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="text-[15px] truncate">{d.title}</div>
-                          <div className="text-[13px] text-white/45 truncate mt-0.5">
-                            {d.artist || '未知歌手'}
-                          </div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            {d.bitrate && (
-                              <span className="px-1.5 py-0.5 rounded-md bg-[#0A84FF]/20 text-[#0A84FF]
-                                               text-[11px] font-medium tabular-nums">
-                                {d.bitrate} kbps
-                              </span>
-                            )}
-                            <span className="text-[11px] text-white/30 tabular-nums">
-                              {formatSize(d.size)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => exportDownload(d)}
-                            title="匯出" aria-label="匯出"
-                            className="px-3.5 py-1.5 rounded-full bg-white/15 text-[13px] font-medium
-                                       active:opacity-70 transition">
-                            匯出
-                          </button>
-                          <button onClick={() => removeDownload(d)}
-                            title="刪除" aria-label="刪除"
-                            className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A]
-                                       text-[13px] font-medium active:opacity-70 transition">
-                            刪除
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
-                    檔案存在 App 的儲存空間。「匯出」會開啟系統分享面板，可以存到
-                    檔案、雲端硬碟或傳給別人。
-                  </div>
+                  <button onClick={() => setShowDownloads(true)}
+                    className="w-full rounded-[14px] bg-white/[0.07] px-4 py-3.5 flex items-center
+                               justify-between gap-3 active:bg-white/10 md:hover:bg-white/[0.1]
+                               transition-colors text-left">
+                    <div className="min-w-0">
+                      <div className="text-[15px]">已下載歌曲</div>
+                      <div className="text-[13px] text-white/40 mt-0.5">{downloads.length} 首</div>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+                      className="text-white/30 flex-shrink-0">
+                      <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.8"
+                        strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
                 </div>
               )}
 
