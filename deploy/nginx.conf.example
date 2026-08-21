@@ -1,0 +1,31 @@
+# WhyMusic 反向代理範例。放到 /etc/nginx/http.d/ 或 sites-available/ 後啟用。
+# server.mjs 預設綁 127.0.0.1:8788，只收本機連線，對外一律走這層。
+
+server {
+    listen 80;
+    server_name music.example.com;   # 改成你的網域，或用 _ 當預設站
+
+    client_max_body_size 200m;
+    # 音頻串流必須關掉緩衝，否則會播到一半卡住
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+
+    location / {
+        proxy_pass http://127.0.0.1:8788;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # server.mjs 設 TRUST_PROXY=1 時會讀這個標頭拿真實 IP 做限流
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # 播放器背景播放/串流用；WebSocket 目前沒用到，留著無害
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+# HTTPS：裝好上面的 HTTP 站後，用 certbot 自動加憑證與轉址
+#   apt install -y certbot python3-certbot-nginx   # Debian/Ubuntu
+#   apk add certbot certbot-nginx                   # Alpine
+#   certbot --nginx -d music.example.com

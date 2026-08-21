@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+packages/web/dist
+dist-cf
+.git
+.wrangler
+.sync
+*.log
+.env
+.env.*
+!.env.example
+browser-use-tests
+tests

@@ -1,0 +1,29 @@
+[Unit]
+Description=WhyMusic self-hosted server
+Documentation=https://github.com/whypuss/musicweb
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# __WORKDIR__ / __NODE__ / __USER__ 由 deploy/install.sh 在安裝時填入
+WorkingDirectory=__WORKDIR__
+ExecStart=__NODE__ packages/web/scripts/server.mjs
+EnvironmentFile=__ENVFILE__
+User=__USER__
+Restart=on-failure
+RestartSec=3
+# 收到 stop 時送 SIGTERM，server.mjs 會排空連線再退出（見進程健壯性那段）
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 加固：這個服務只需要讀自己的目錄、對外連網，不需要別的權限
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# 配對碼寫在 repo 的 .sync/（見 SYNC_DIR），允許寫工作目錄
+ReadWritePaths=__WORKDIR__
+
+[Install]
+WantedBy=multi-user.target

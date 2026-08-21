@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+# WhyMusic 自架服務（OpenRC，用於 Alpine / 多數 LXC 容器）
+#
+# 環境變數用 export 寫在 start_pre 裡，不用 OpenRC 的 command_env= ——
+# 那不是有效的變數名，設了不會生效（部署踩過：服務起來卻不在指定的埠）。
+# 其餘設定從 __ENVFILE__ 讀入。
+
+name="whymusic"
+description="WhyMusic self-hosted server"
+directory="__WORKDIR__"
+command="__NODE__"
+command_args="packages/web/scripts/server.mjs"
+command_background="yes"
+command_user="__USER__"
+pidfile="/run/whymusic.pid"
+output_log="/var/log/whymusic.log"
+error_log="/var/log/whymusic.log"
+# stop 時送 SIGTERM，server.mjs 排空連線再退出
+retry="SIGTERM/15"
+
+start_pre() {
+    if [ -f "__ENVFILE__" ]; then
+        set -a
+        . "__ENVFILE__"
+        set +a
+    fi
+}
+
+depend() {
+    need net
+}

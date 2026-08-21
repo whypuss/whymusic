@@ -7,13 +7,14 @@
 
 ## 先選一種
 
-| | **A：Cloudflare Pages** | **B：拖拉 zip** | **C：VPS 自建** |
+| | **A：Cloudflare Pages** | **B：拖拉 zip** | **C：VPS / LXC / 自建** |
 |---|---|---|---|
-| 費用 | 免費 | 免費 | 一臺 VPS |
+| 費用 | 免費 | 免費 | 一臺 Linux 主機 |
 | 需要裝工具 | Node + pnpm + wrangler | **不需要** | Node + nginx |
+| 安裝 | `pnpm deploy:cf` | 上傳 zip | `sh deploy/install.sh`（自動偵測 systemd/OpenRC） |
 | 功能 | 完整 | 完整 | 完整 |
-| 更新方式 | `pnpm deploy:cf` | 重新上傳 zip | `git pull` + 重啟 |
-| 設定方式 | 改 `plugins/whymusic.js` | 同 A | 環境變數 |
+| 更新方式 | `pnpm deploy:cf` | 重新上傳 zip | `git pull` + 重跑 install.sh |
+| 設定方式 | 改 `plugins/whymusic.js` | 同 A | 環境變數（`/etc/whymusic.env`） |
 | 上游快取 | 只在單一 isolate 內 | 同 A | 全站共用 |
 
 三種方式功能相同。音源邏輯（子源扇出、繁簡歸一化、跨子源救援）在插件裡、由瀏覽器
@@ -123,149 +124,104 @@ zip 內已附 `README.txt` 說明。
 
 ---
 
-## 方式 C：VPS / 自建伺服器
+## 方式 C：VPS / LXC / 自建 Linux 伺服器
 
 後端 `packages/web/scripts/server.mjs` **零外部依賴**（只用 Node 內建模組），
-同時服務前端靜態檔與 API，預設監聽 `:8788`。
+同時服務前端靜態檔與 API。因此不管是 VPS、LXC 容器還是裸機 Linux，只要有
+**Node ≥ 20.11**，不必編譯任何原生模組就能跑。
 
-### 1. 伺服器準備
+### 一鍵安裝
+
+`deploy/install.sh` 會自動偵測 systemd 或 OpenRC、裝好對應的服務、建立設定檔、
+啟動並做健康檢查。
 
 ```bash
-# Node 20+（Alpine 用 apk add nodejs npm）
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt install -y nodejs nginx
-npm install -g pnpm
+# 1) 準備 Node（三選一，看你的系統）
+apt install -y nodejs npm nginx          # Debian/Ubuntu（需 Node 20.11+，太舊就用 nodesource）
+apk add nodejs npm nginx                 # Alpine / 多數 LXC
+# dnf install -y nodejs nginx            # Fedora/RHEL
+
+# 2) 取得程式碼
+git clone https://github.com/whypuss/musicweb.git /opt/whymusic
+cd /opt/whymusic
+
+# 3) 安裝（要 root）。會自動建置前端、裝服務、啟動
+sudo sh deploy/install.sh
 ```
 
-### 2. 取得程式碼並編譯
+裝完服務就跑起來了，預設綁 `127.0.0.1:8788`（只收本機，準備讓反向代理接手）。
+
+> **建置需要 pnpm/npm。** install.sh 若發現前端還沒 build，會用 pnpm 或 npm 建置。
+> 記憶體很小的機器（如 256MB 的 LXC）在本機建置可能吃力 —— 那就在別台先
+> `pnpm build`，把 `packages/web/dist/` 複製到伺服器同一位置，再跑 install.sh，
+> 它偵測到 dist 已存在就跳過建置。
+
+可用環境變數調整安裝行為：
 
 ```bash
-mkdir -p /var/www && cd /var/www
-git clone https://github.com/whypuss/musicweb.git musicweb
-cd musicweb
-pnpm install
-pnpm build
-```
-
-> **若是從本機上傳而非在機器上 clone，三樣都要傳：**
-> - `packages/web/dist/`（前端）
-> - `packages/web/scripts/server.mjs`（後端）
-> - **`plugins/`（音源插件）**
->
-> 少了 `plugins/` 的話 `/plugins/whymusic.js` 會回 404，音源裝不起來，
-> 整站不能搜尋或播放。插件目錄預設是 repo 根層的 `plugins/`，可用
-> `PLUGINS_DIR` 覆寫。
-
-### 3. 環境變數（全部可選）
-
-```bash
-sudo nano /etc/whymusic.env
-sudo chmod 600 /etc/whymusic.env
+sudo SERVICE_USER=whymusic ENV_FILE=/etc/whymusic.env sh deploy/install.sh
 ```
 
 | 變數 | 預設 | 說明 |
 |------|------|------|
+| `SERVICE_USER` | `root` | 服務執行身分（非 root 需自行先建好該帳號） |
+| `ENV_FILE` | `/etc/whymusic.env` | 設定檔位置 |
+| `NODE_BIN` | 從 PATH 找 | node 執行檔路徑 |
+
+### 設定
+
+設定檔在 `/etc/whymusic.env`（install.sh 從 [`deploy/whymusic.env.example`](deploy/whymusic.env.example)
+建立）。改完重啟服務生效。全部可選：
+
+| 變數 | 預設 | 說明 |
+|------|------|------|
 | `PORT` | `8788` | 監聽埠 |
+| `HOST` | `127.0.0.1` | 監聽位址。有反代時維持 `127.0.0.1`；無反代要直接對外才設 `0.0.0.0` |
+| `TRUST_PROXY` | `1` | 有反代時設 `1`，讓限流讀 `X-Forwarded-For` 拿真實 IP。無反代設 `1` 危險（XFF 可偽造） |
+| `PROXY_ALLOWED_HOSTS` | 空（不限制） | `/api/proxy` 網域白名單，逗號分隔。私有網段永遠擋，不受此影響 |
+| `PROXY_RATE_CAPACITY` | `60` | `/api/proxy` 每 IP 限流容量。設 `0` 關閉（公開時不建議） |
+| `PROXY_RATE_REFILL` | `5` | 每秒回補（≈長期每秒上限） |
 | `PLUGINS_DIR` | repo 的 `plugins/` | 音源插件目錄 |
-| `WHY_MUSIC_SOURCES` | `netease,joox` | 啟用的子音源 |
-| `WHY_MUSIC_BITRATE` | `320` | 預設音質（kbps，僅 GD 子源適用） |
-| `GD_API_URL` | 見 `plugins/whymusic.js` | 後端側音源用的上游位址 |
 | `SYNC_DIR` | repo 的 `.sync/` | 裝置配對碼的暫存目錄 |
-| `BUILD_STAMP` | 啟動時問 git | 建置戳記。從本機上傳（機器上沒有 git 工作區）時要傳，否則版本區塊會誤報前後端不一致 |
+| `BUILD_STAMP` | install.sh 填 | 建置戳記，每次安裝自動更新，不必手改 |
 
-完整範例見 [.env.example](.env.example)。
+### 反向代理
 
-### 4. 系統服務
-
-**systemd（Ubuntu / Debian）**
-
-```ini
-# /etc/systemd/system/whymusic.service
-[Unit]
-Description=WhyMusic Server
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/var/www/musicweb/packages/web
-ExecStart=/usr/bin/node scripts/server.mjs
-Restart=always
-RestartSec=5
-EnvironmentFile=-/etc/whymusic.env
-
-[Install]
-WantedBy=multi-user.target
-```
+**務必**在前面架一層反代對外 —— 服務預設只綁 `127.0.0.1`。範例見
+[`deploy/nginx.conf.example`](deploy/nginx.conf.example)：
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now whymusic
-sudo systemctl status whymusic
+cp deploy/nginx.conf.example /etc/nginx/http.d/whymusic.conf   # Alpine
+# cp deploy/nginx.conf.example /etc/nginx/sites-available/whymusic  # Debian，再 ln 到 sites-enabled
+# 改好 server_name 後：
+nginx -t && rc-service nginx reload      # 或 systemctl reload nginx
 ```
 
-**OpenRC（Alpine）**
+HTTPS 用 certbot：`certbot --nginx -d music.example.com`（Alpine 先 `apk add certbot certbot-nginx`）。
 
-```sh
-#!/sbin/openrc-run
-name="WhyMusic"
-command="/usr/bin/node"
-command_args="packages/web/scripts/server.mjs"
-command_background="true"
-directory="/var/www/musicweb"
-pidfile="/run/whymusic.pid"
-output_log="/var/log/whymusic.log"
-error_log="/var/log/whymusic.log"
-
-export PORT=8788
-
-depend() { need net; }
-```
-
-```sh
-chmod +x /etc/init.d/whymusic
-rc-update add whymusic default   # 少了這行重開機不會自動起
-rc-service whymusic start
-```
-
-> OpenRC 沒有 `command_env` 這個變數 —— 要傳環境變數就用 `export`。
-> 曾經踩過：寫成 `command_env="PORT=8443 ..."` 完全沒有生效，PORT 仍是預設值。
-
-### 5. Nginx 反向代理
-
-```nginx
-server {
-    listen 80;
-    server_name music.example.com;
-
-    client_max_body_size 200m;
-    # 音頻串流必須關掉緩衝，否則會播到一半斷
-    proxy_buffering off;
-    proxy_request_buffering off;
-    proxy_read_timeout 600s;
-    proxy_send_timeout 600s;
-
-    location / {
-        proxy_pass http://127.0.0.1:8788;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
+### 管理服務
 
 ```bash
-sudo ln -sf /etc/nginx/sites-available/whymusic /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
+# systemd
+systemctl status whymusic          # 狀態
+journalctl -u whymusic -f          # 日誌
+systemctl restart whymusic         # 改設定後重啟
+
+# OpenRC
+rc-service whymusic status
+tail -f /var/log/whymusic.log
+rc-service whymusic restart
 ```
 
-後端本身就會服務前端靜態檔，所以整站交給它就行，不必另外設 `root`。
+更新版本：`git pull` 後重跑 `sudo sh deploy/install.sh`（會重新建置、更新戳記、重啟）。
 
-### 6. HTTPS
+### Docker（可選）
+
+因為零相依，容器映像很小。見 [`deploy/Dockerfile`](deploy/Dockerfile)：
 
 ```bash
-apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d music.example.com
+docker build -f deploy/Dockerfile -t whymusic .
+docker run -d -p 8788:8788 -e HOST=0.0.0.0 --name whymusic whymusic
 ```
 
 ---
