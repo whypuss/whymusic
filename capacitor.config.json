@@ -1,0 +1,12 @@
+{
+  "appId": "xyz.whymusic.app",
+  "appName": "WhyMusic",
+  "webDir": "packages/web/dist",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

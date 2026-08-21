@@ -19,7 +19,17 @@ export const pluginManager = new PluginManager()
  * 後端），所以它是為這個播放器寫的，貼到別的客戶端不一定能動。
  */
 export const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
-export const OFFICIAL_PLUGIN_URL = '/plugins/whymusic.js'
+/**
+ * 內建音源的位置。網頁版是 /plugins/whymusic.js；APK 裡改成 /sources/。
+ *
+ * 為什麼 APK 不能用 /plugins/：Capacitor 把 assets/public/plugins 這個路徑保留給
+ * Cordova 插件，每次 `cap sync` 都會 remove 掉整個目錄（見其 cordova.js 的
+ * removePluginFiles）。放在那裡的音源會被清掉，於是 APK 裡那個「內建音源」連結
+ * 404，使用者拿到一個永遠裝不了音源的 app。改個目錄名就避開了。
+ */
+export const OFFICIAL_PLUGIN_URL = isNative()
+  ? '/sources/whymusic.js'
+  : '/plugins/whymusic.js'
 
 /**
  * 前端的建置戳記（vite define 注入）。顯示在「音源」頁，用來判斷線上跑的是哪一版 ——

@@ -8,3 +8,12 @@ dist/
 dist-cf/
 .wrangler/
 .sync/
+
+# Android（Capacitor）建置產物。android/ 專案本身進版控，產物不進
+android/app/build/
+android/build/
+android/.gradle/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/local.properties
+android/capacitor-cordova-android-plugins/

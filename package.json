@@ -14,9 +14,15 @@
     "typecheck": "pnpm --filter @whymusic/web typecheck",
     "build:cf": "node scripts/build-cf.mjs",
     "build:zip": "node scripts/build-cf.mjs && node scripts/build-cf-zip.mjs",
-    "deploy:cf": "pnpm build:cf && cd packages/web && wrangler pages deploy dist --project-name=whymusicweb --branch=main --commit-dirty=true"
+    "deploy:cf": "pnpm build:cf && cd packages/web && wrangler pages deploy dist --project-name=whymusicweb --branch=main --commit-dirty=true",
+    "build:apk": "node scripts/build-apk.mjs"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.0",
     "esbuild": "0.21.5"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0"
   }
 }

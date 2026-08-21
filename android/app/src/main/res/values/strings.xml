@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">WhyMusic</string>
+    <string name="title_activity_main">WhyMusic</string>
+    <string name="package_name">xyz.whymusic.app</string>
+    <string name="custom_url_scheme">xyz.whymusic.app</string>
+</resources>
