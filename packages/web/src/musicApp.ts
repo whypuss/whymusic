@@ -46,17 +46,30 @@ const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
 const STORAGE_QUALITY = 'musicfree-quality'
 
 /**
- * 音質。字串原樣交給音源插件詮釋 —— WhyMusic 對應 128 / 320 / 999 kbps，
- * 但播放器本身不假設任何音源的音質階梯（換音源時階梯可能完全不同）。
- * 播放與下載共用同一個設定：使用者選了「最高」，下載也該是最高。
+ * 音質，直接用 kbps 當值。上游（GD）實測支援五檔：128 / 192 / 320 / 740 / 999
+ * —— 前三檔各自回不同大小的檔，740 與 999 都解到同一個無損檔（回報 br=986、
+ * 約 33MB），所以最高兩檔是同一個來源。
+ *
+ * 為什麼用數字而不是 low/standard/super 這種名稱：使用者想的是 kbps，而且名稱
+ * 只能對應三檔、把上游的階梯壓扁了。這個值原樣傳給音源，由它決定怎麼用 ——
+ * 播放器不假設任何音源的階梯（換音源時可能完全不同）。
+ *
+ * 播放與下載共用同一個設定：選了 999，下載也是 999。
  */
-export type Quality = 'low' | 'standard' | 'super'
+export type Quality = '128' | '192' | '320' | '740' | '999'
 export const QUALITIES: { value: Quality; label: string; hint: string }[] = [
-  { value: 'low', label: '流量優先', hint: '約 128 kbps' },
-  { value: 'standard', label: '標準', hint: '約 320 kbps' },
-  { value: 'super', label: '最高', hint: '音源可提供的最佳品質' },
+  { value: '128', label: '128 kbps', hint: '最省流量' },
+  { value: '192', label: '192 kbps', hint: '省流量' },
+  { value: '320', label: '320 kbps', hint: '標準，一般聽感已足夠' },
+  { value: '740', label: '740 kbps', hint: '高解析（實際取到無損）' },
+  { value: '999', label: '999 kbps', hint: '無損，檔案最大' },
 ]
-const DEFAULT_QUALITY: Quality = 'standard'
+const DEFAULT_QUALITY: Quality = '320'
+
+/** 舊版存的是 low/standard/super，換成對應的 kbps，別讓使用者的設定憑空重置 */
+const QUALITY_MIGRATION: Record<string, Quality> = {
+  low: '128', standard: '320', super: '999',
+}
 
 /**
  * 一個分類要幾首。粵語會把「最新」與「熱門」兩種順序交錯塞進同一份清單，
@@ -403,8 +416,9 @@ export function useMusicApp() {
 
   /** 音質偏好。播放與下載共用，記在 localStorage */
   const [quality, setQualityState] = useState<Quality>(() => {
-    const saved = localStorage.getItem(STORAGE_QUALITY) as Quality | null
-    return QUALITIES.some(q => q.value === saved) ? (saved as Quality) : DEFAULT_QUALITY
+    const saved = localStorage.getItem(STORAGE_QUALITY) || ''
+    if (QUALITIES.some(q => q.value === saved)) return saved as Quality
+    return QUALITY_MIGRATION[saved] || DEFAULT_QUALITY
   })
   /**
    * 音質也放進 ref：play() 會被 ended 事件的處理函式呼叫，那個函式只註冊一次，

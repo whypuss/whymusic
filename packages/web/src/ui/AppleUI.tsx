@@ -512,9 +512,8 @@ export default function AppleUI({ app }: { app: MusicApp }) {
               <p className="text-[15px] text-white/45 mt-0.5">音質、音源、歌單與同步</p>
 
               {/*
-                音質。播放與下載共用同一個設定 —— 選了「最高」，下載也是最高。
-                實際位元率由音源決定（WhyMusic 對應 128/320/999 kbps），所以這裡
-                只寫「約」；換成別的音源時階梯可能完全不同。
+                音質。播放與下載共用同一個設定 —— 選了 999，下載也是 999。
+                五檔是上游實際支援的階梯（見 musicApp 的 QUALITIES）。
               */}
               <div className="mt-6">
                 <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
@@ -541,7 +540,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   ))}
                 </div>
                 <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
-                  下載也用這個音質。音源不一定每首都有最高音質，取不到時會退到可用的。
+                  下載也用這個音質。不是每首歌都有高音質版本，取不到時音源會退到可用的。
                 </div>
               </div>
 
