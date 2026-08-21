@@ -10,6 +10,8 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createHmac } from 'node:crypto'
 import { execSync } from 'node:child_process'
+import { gzip as gzipCb } from 'node:zlib'
+import { promisify } from 'node:util'
 import {
   SYNC_CODE_LEN,
   SYNC_MAX_BYTES,
@@ -839,6 +841,8 @@ async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
 
 // ── HTTP Server ──────────────────────────────────────────────────
 
+const gzip = promisify(gzipCb)
+
 const MIME_TYPES = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -849,6 +853,7 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.webmanifest': 'application/manifest+json',
 }
 
 function corsHeaders() {
@@ -870,17 +875,72 @@ function jsonResponse(res, data, status = 200) {
   res.end(JSON.stringify(data))
 }
 
+/** 值得壓的型別。圖片與字型本身已經是壓縮格式，再壓只是浪費 CPU */
+const COMPRESSIBLE = new Set([
+  '.html', '.css', '.js', '.json', '.svg', '.webmanifest', '.map', '.txt',
+])
+/** 小於這個大小不壓 —— gzip 的標頭與 CPU 換不回什麼 */
+const GZIP_MIN = 1024
+
+/**
+ * 壓好的靜態檔快取（路徑 + mtime → gzip buffer）。
+ *
+ * 靜態檔在部署之間不會變，所以壓一次就好；帶上 mtime 當鍵，換版後自動失效。
+ * 這台機器只有 256MB，但整個 dist 壓完也就幾百 KB，划算得很。
+ */
+const gzipCache = new Map()
+
+async function gzipStatic(filePath, content, mtimeMs) {
+  const key = `${filePath}:${mtimeMs}`
+  const hit = gzipCache.get(key)
+  if (hit) return hit
+  const zipped = await gzip(content)
+  // 壓不小就別用（極少數情況），存 null 表示「這個檔不要壓」
+  const value = zipped.length < content.length ? zipped : null
+  gzipCache.set(key, value)
+  return value
+}
+
+/**
+ * 靜態檔。做兩件在慢線路上很有感的事：
+ *
+ *   1. gzip —— 前端 bundle 是 789KB，壓完約 247KB。原本兩邊都沒壓（nginx 的
+ *      gzip 是註解掉的預設值），所以每次開站都在傳三倍的量。壓縮做在這裡而不是
+ *      nginx，是因為服務也會被直接訪問（不經 nginx 的那個埠），而且換部署環境
+ *      時不必再設一次。
+ *   2. Cache-Control —— 原本一個快取標頭都沒有，瀏覽器每次開站都重抓整包 bundle。
+ *      /assets/ 底下的檔名帶內容雜湊（換版必換名），可以放心 immutable；
+ *      index.html 與 sw.js 則必須 no-cache，否則換版後拿到舊的入口。
+ */
 async function serveStatic(res, filePath, extraHeaders) {
   const ext = path.extname(filePath)
   const contentType = MIME_TYPES[ext] || 'application/octet-stream'
 
   try {
-    const content = await fs.promises.readFile(filePath)
-    res.writeHead(200, {
+    const [content, stat] = await Promise.all([
+      fs.promises.readFile(filePath),
+      fs.promises.stat(filePath),
+    ])
+    const headers = {
       'Content-Type': contentType,
       ...corsHeaders(),
+      // 檔名帶雜湊的資產可以永久快取；入口檔不行
+      'Cache-Control': filePath.includes(`${path.sep}assets${path.sep}`)
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache',
       ...extraHeaders,
-    })
+    }
+
+    const wantsGzip = /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')
+    if (wantsGzip && COMPRESSIBLE.has(ext) && content.length >= GZIP_MIN) {
+      const zipped = await gzipStatic(filePath, content, stat.mtimeMs)
+      if (zipped) {
+        res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' })
+        res.end(zipped)
+        return true
+      }
+    }
+    res.writeHead(200, headers)
     res.end(content)
   } catch {
     return false
