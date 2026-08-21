@@ -45,13 +45,28 @@ say "✓ Node $NODE_VER（$NODE_BIN）"
 # dist/ 是建置產物、不進版控，所以剛 clone 的 repo 沒有它。
 if [ ! -f packages/web/dist/index.html ]; then
   say "▸ 前端尚未建置，嘗試建置…"
+  # 這是個 pnpm workspace，根目錄的 build script 會呼叫 pnpm。取得 pnpm 的順序：
+  #   1) 現成的 pnpm
+  #   2) Node 自帶的 corepack（Node ≥16.9 都有）—— 不必全域安裝任何東西，
+  #      呼應「有 Node 就能部署」的承諾
+  # 兩者都沒有才退回 npm：此時繞過根 script（它會叫 pnpm），直接在 web 套件裡
+  # 用 npm 建置（packages/web 的 build 是 tsc && vite build，自洽）。
+  PNPM=""
   if command -v pnpm >/dev/null 2>&1; then
-    pnpm install --frozen-lockfile && pnpm build
+    PNPM="pnpm"
+  elif command -v corepack >/dev/null 2>&1; then
+    corepack enable pnpm >/dev/null 2>&1 || true
+    if corepack pnpm --version >/dev/null 2>&1; then PNPM="corepack pnpm"; fi
+  fi
+  if [ -n "$PNPM" ]; then
+    say "  用 $PNPM 建置"
+    $PNPM install --frozen-lockfile && $PNPM build
   elif command -v npm >/dev/null 2>&1; then
-    npm install && npm run build
+    say "  用 npm 建置（在 packages/web 內，繞過需要 pnpm 的根 script）"
+    ( cd packages/web && npm install && npm run build )
   else
-    die "前端未建置，且找不到 pnpm/npm。請在有工具的機器上 build 後，把
-    packages/web/dist/ 複製到這台的同一位置，再重跑本腳本。"
+    die "前端未建置，且找不到 pnpm/corepack/npm。請在有工具的機器上 build 後，
+    把 packages/web/dist/ 複製到這台的同一位置，再重跑本腳本。"
   fi
 fi
 [ -f packages/web/dist/index.html ] || die "建置後仍找不到 packages/web/dist/index.html"
