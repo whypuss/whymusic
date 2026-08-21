@@ -34,10 +34,18 @@ const STORAGE_FAVORITES = 'musicfree-favorites'
 const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
 
 /**
- * 推薦分類。一排五個標籤，沒有第二個軸 —— 榜單本身就是排好序的，再給
- * 「最新／熱門」兩種排法只是讓一個分類要抓兩次、頁面多兩行按鈕。
+ * 一個分類要幾首。粵語會把「最新」與「熱門」兩種順序交錯塞進同一份清單，
+ * 40 首會讓每一種只剩 20 首 —— 給到 80 兩邊都還有原本的量。
+ * 回應仍然只有二十幾 KB（榜單原始資料在後端就裁掉了）。
+ */
+const RECOMMEND_LIMIT = 80
+
+/**
+ * 推薦分類。一排五個標籤，沒有第二個軸 —— 要在一個分類裡呈現不同面向
+ * （粵語的最新與熱門）是把同一份榜單排兩次後交錯，由音源那邊處理，
+ * 不必在畫面上多一行按鈕、也不必多抓一次上游。
  *
- * 名稱只是傳給音源插件的字串，實際對應哪份榜單由插件與後端決定
+ * 名稱只是傳給音源插件的字串，實際對應哪份榜單、怎麼排由插件與後端決定
  * （見 plugins/whymusic.js 與 worker/why.js 的 CATEGORIES）—— 換榜單不必動前端。
  *
  * 粵語是預設：這個 app 主要在聽港樂，而粵語曲庫在各家榜單裡本來就是少數，
@@ -49,7 +57,7 @@ export const RECOMMEND_CATEGORIES: {
   value: RecommendCategory; label: string; caption: string
 }[] = [
   { value: 'hot', label: '熱門', caption: '網易雲熱歌榜' },
-  { value: 'cantonese', label: '粵語', caption: '香港叱咤903專業推介' },
+  { value: 'cantonese', label: '粵語', caption: '香港叱咤903專業推介（最新＋熱門）' },
   { value: 'cpop', label: '中文', caption: '網易雲新歌榜' },
   { value: 'kpop', label: 'Kpop', caption: '網易雲韓語榜' },
   { value: 'western', label: '歐美', caption: '網易雲歐美熱歌榜' },
@@ -893,7 +901,7 @@ export function useMusicApp() {
       let supported = false
       for (const plugin of enabled) {
         try {
-          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, 40)
+          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, RECOMMEND_LIMIT)
           if (list === null) continue  // 該插件不提供推薦
           supported = true
           songs = songs.concat(list)

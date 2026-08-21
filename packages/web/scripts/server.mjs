@@ -520,12 +520,29 @@ const GD_BITRATE = parseInt(process.env.WHY_MUSIC_BITRATE || '320', 10)
 // 只回裁切後的幾十首 ≈ 15KB，全站共用。
 //
 // 榜單本身已排好序（排行榜的順序就是它的意義），所以不再有「最新／熱門」兩種排法。
+// orders 是這份榜單要用幾種順序取樣（同一份抓回來的資料排兩次，不會多打上游）：
+//   chart — 榜單本身的順序（叱咤榜是按發行時間降序，也就是「最新」）
+//   pop   — 按網易雲的 pop 熱度降序，也就是「熱門」
+// 粵語兩種都要：叱咤榜有 1000 首，光看原順序只會看到最近幾週發行的，那些真正
+// 紅的粵語歌反而看不到。
 const GD_CATEGORIES = {
-  hot: '3778678',          // 熱歌榜（每小時更新，跨語種總熱門）
-  cantonese: '5097494848', // 香港叱咤903專業推介 —— 唯一還在更新的粵語榜
-  cpop: '3779629',         // 新歌榜（華語為主，每天更新）
-  kpop: '745956260',       // 韓語榜（每天更新）
-  western: '2809513713',   // 歐美熱歌榜（每天更新）
+  hot: { list: '3778678', orders: ['chart'] },          // 熱歌榜（每小時更新，跨語種總熱門）
+  cantonese: { list: '5097494848', orders: ['chart', 'pop'] }, // 叱咤903 —— 唯一還在更新的粵語榜
+  cpop: { list: '3779629', orders: ['chart'] },         // 新歌榜（華語為主，每天更新）
+  kpop: { list: '745956260', orders: ['chart'] },       // 韓語榜（每天更新）
+  western: { list: '2809513713', orders: ['chart'] },   // 歐美熱歌榜（每天更新）
+}
+
+/**
+ * 一份榜單按指定順序排列。
+ *   chart — 原順序（榜單自己排好的）
+ *   pop   — 熱度降序；同熱度以發行時間新者優先，否則前段會擠滿一堆 pop=100
+ *           的曲目而順序毫無意義
+ */
+function sortTracks(tracks, order) {
+  if (order !== 'pop') return tracks
+  return [...tracks].sort((a, b) =>
+    ((b.pop ?? 0) - (a.pop ?? 0)) || ((b.publishTime ?? 0) - (a.publishTime ?? 0)))
 }
 const DEFAULT_CATEGORY = 'cantonese'
 /** 給路由層驗證用（收到沒見過的 cat 就退回預設） */
@@ -817,23 +834,33 @@ function gdTrackToItem(track) {
  * 叱咤那份解析後在記憶體裡是好幾十 MB，這台機器只有 256MB，留著整份不划算。
  */
 async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
-  const listId = GD_CATEGORIES[category] || GD_CATEGORIES[DEFAULT_CATEGORY]
-  const cacheKey = `rec:${listId}:${limit}`
+  const cat = GD_CATEGORIES[category] || GD_CATEGORIES[DEFAULT_CATEGORY]
+  const orders = cat.orders || ['chart']
+  const cacheKey = `rec:${cat.list}:${orders.join('+')}:${limit}`
   const cached = gdCacheGet(cacheKey)
   if (cached !== undefined) return cached
 
-  const data = await gdRequest('playlist', { source: 'netease', id: listId })
+  const data = await gdRequest('playlist', { source: 'netease', id: cat.list })
   const tracks = data?.playlist?.tracks || []
+
+  // 每種順序各排一份，再輪流取一首交錯合併、同名同歌手去重。
+  // 交錯而非串接：串接的話 limit 會被第一種順序吃光，第二種等於沒接上。
+  const buckets = orders.map(
+    order => sortTracks(tracks, order).map(gdTrackToItem).filter(Boolean),
+  )
   const seen = new Set()
   const out = []
-  for (const track of tracks) {
-    if (out.length >= limit) break
-    const item = gdTrackToItem(track)
-    if (!item) continue
-    const key = `${gdNormalizeName(item.title)}::${gdNormalizeName(item.artist)}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(item)
+  const maxLen = Math.max(0, ...buckets.map(b => b.length))
+  for (let idx = 0; idx < maxLen && out.length < limit; idx++) {
+    for (const bucket of buckets) {
+      if (out.length >= limit) break
+      const item = bucket[idx]
+      if (!item) continue
+      const key = `${gdNormalizeName(item.title)}::${gdNormalizeName(item.artist)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(item)
+    }
   }
   gdCacheSet(cacheKey, out, GD_TTL.playlist)
   return out
