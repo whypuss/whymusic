@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- 配合 WhyMusic logo（黑底白圓＋黑貓）。白色背景會讓 logo 的黑底變成一個突兀的方塊 -->
+    <color name="ic_launcher_background">#000000</color>
 </resources>
