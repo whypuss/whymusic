@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
 import { isNative, viaProxy } from './core/native'
+import { syncNativeMedia, stopNativeMedia, onNativeControl } from './core/background'
 import {
   DownloadedTrack, readDownloads, saveTrack, exportTrack, exportTextFile, deleteTrack, downloadKey,
 } from './core/downloads'
@@ -607,6 +608,44 @@ export function useMusicApp() {
   }
 
   /**
+   * App 版的原生 MediaSession（core/background，網頁版整段是 no-op）。
+   *
+   * 為什麼 navigator.mediaSession 不夠：WebView 的 mediaSession 不會產生系統的
+   * 媒體通知，vivo／一加這些 ROM 也就不把 App 當音樂播放器 —— 沒有鎖屏控制，
+   * 還會在關屏後把 CPU 睡掉，歌與歌的交界過不去（播完一首就停，開屏才續）。
+   * 原生側是前台服務 + 真的 MediaSession，這裡只負責兩件事：狀態推過去、
+   * 按鍵事件接回來（餵給與 navigator.mediaSession 同一組 mediaActions）。
+   */
+  const currentTimeRef = useRef(0)
+  currentTimeRef.current = currentTime
+  useEffect(() => {
+    if (!isNative()) return
+    if (!playingItem) {
+      stopNativeMedia()
+      return
+    }
+    syncNativeMedia({
+      title: playingItem.title || '',
+      artist: playingItem.artist || '',
+      playing: isPlaying,
+      positionSec: currentTimeRef.current,
+      durationSec: Number.isFinite(duration) ? duration : 0,
+    })
+  }, [playingItem, isPlaying, duration])
+
+  useEffect(() => {
+    if (!isNative()) return
+    onNativeControl(({ action, seekTime }) => {
+      const a = mediaActionsRef.current
+      if (action === 'play') a.play()
+      else if (action === 'pause') a.pause()
+      else if (action === 'next') a.next()
+      else if (action === 'previous') a.prev()
+      else if (action === 'seek' && typeof seekTime === 'number') a.seek(seekTime)
+    })
+  }, [])
+
+  /**
    * 註冊系統控制項（鎖定畫面／通知欄的上一首、播放、下一首）。
    *
    * 依賴 playingItem 而不是只在掛載時註冊一次：系統的「現在播放」工作階段是在
@@ -1019,6 +1058,15 @@ export function useMusicApp() {
     const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds)
     player.seekTo(target)
     setCurrentTime(target)
+    // 原生 MediaSession 的進度是靠播放速率外推的，跳轉要主動校正一次，
+    // 鎖屏上的進度條才不會漂
+    if (isNative() && playingItem) {
+      syncNativeMedia({
+        title: playingItem.title || '', artist: playingItem.artist || '',
+        playing: isPlaying, positionSec: target,
+        durationSec: Number.isFinite(duration) ? duration : 0,
+      })
+    }
   }
 
   const loadMore = async () => {
