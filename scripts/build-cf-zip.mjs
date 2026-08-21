@@ -33,13 +33,13 @@ for (const f of ['index.html', '_worker.js']) {
   }
 }
 
-// 1) 把 dist 整包搬進暫存區（前端 + _worker.js + 音源插件）
+// 1) 把 dist 整包搬進暫存區（前端 + _worker.js —— 不含音源，dist 裡本來就沒有）
 fs.rmSync(STAGE, { recursive: true, force: true })
 fs.mkdirSync(STAGE, { recursive: true })
 for (const name of fs.readdirSync(DIST)) {
   fs.cpSync(path.join(DIST, name), path.join(STAGE, name), { recursive: true })
 }
-console.log('✓ 已複製前端、_worker.js 與音源插件')
+console.log('✓ 已複製前端與 _worker.js（不含音源）')
 
 // 2) 附一份說明，收到 zip 的人不必回頭翻文件
 fs.writeFileSync(path.join(STAGE, 'README.txt'), `WhyMusic Web — Cloudflare Pages 部署包
