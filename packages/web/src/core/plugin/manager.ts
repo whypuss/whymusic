@@ -194,15 +194,16 @@ export class PluginManager {
   /**
    * 推薦歌曲。本專案擴充的介面，插件未實作時回 null，
    * 讓 UI 能明確告知「此音源不支援推薦」而不是顯示空清單。
+   * category: 分類名稱（如 "cantonese", "cpop", "kpop", "western"）
    */
   async getRecommendForPlugin(
-    name: string, mode: string, limit = 40,
+    name: string, category: string, mode: string, limit = 40,
   ): Promise<MusicItem[] | null> {
     const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
     if (!p || !this.enabled.has(p.name)) return null
     const fn = (p as any).getRecommend
     if (typeof fn !== 'function') return null
-    const result: any = await fn.call(p, mode, limit) ?? {}
+    const result: any = await fn.call(p, category, mode, limit) ?? {}
     return this.tagItems(normalizeItemList(result), p.name)
   }
 

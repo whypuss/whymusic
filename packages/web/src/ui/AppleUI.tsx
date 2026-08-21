@@ -15,6 +15,7 @@ import {
   OFFICIAL_PLUGIN_URL,
   PLAY_MODE_ICON,
   PLAY_MODE_LABEL,
+  RECOMMEND_CATEGORIES,
 } from './../musicApp'
 
 /** iOS 風格的分段控制 */
@@ -125,10 +126,12 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     hasMore, importBusy, importFavorites, importProgress, importText, installPluginFromURL,
     isFavorite, isPlaying, keyword, loadMore, loading,
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
-    pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendLoading, recommendMode,
-    recommendSongs, recommendUnsupported, removePlugin, results, search,
+    pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
+    recommendLoading, recommendMode, recommendSongs, recommendUnsupported, removePlugin,
+    results, search,
     searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
-    setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendMode,
+    setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
+    switchRecommendMode,
     syncAvailable, syncBusy,
     syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
   } = app
@@ -209,13 +212,28 @@ export default function AppleUI({ app }: { app: MusicApp }) {
             <>
               <div className="px-4 pt-8 pb-4">
                 <h1 className="text-[34px] font-bold tracking-tight leading-tight">推薦</h1>
-                <p className="text-[15px] text-white/45 mt-0.5">香港粵語流行榜</p>
-                <div className="mt-4">
+                {/* 副標說明目前分類的榜單來源，換分類時跟著換 */}
+                <p className="text-[15px] text-white/45 mt-0.5">
+                  {RECOMMEND_CATEGORIES.find(c => c.value === recommendCategory)?.caption}
+                </p>
+                {/*
+                  兩個軸：分類（粵語／中文／Kpop／歐美）決定榜單，排序（最新／熱門）
+                  決定榜單內怎麼排。分類自己一行 —— 四個選項與排序擠在同一行，
+                  窄螢幕會折行折得很難看。
+                */}
+                <div className="mt-4 space-y-2">
                   <Segmented
-                    value={recommendMode}
-                    onChange={m => switchRecommendMode(m)}
-                    options={[{ value: 'new', label: '最新' }, { value: 'hot', label: '熱門' }]}
+                    value={recommendCategory}
+                    onChange={c => switchRecommendCategory(c)}
+                    options={RECOMMEND_CATEGORIES.map(c => ({ value: c.value, label: c.label }))}
                   />
+                  <div>
+                    <Segmented
+                      value={recommendMode}
+                      onChange={m => switchRecommendMode(m)}
+                      options={[{ value: 'new', label: '最新' }, { value: 'hot', label: '熱門' }]}
+                    />
+                  </div>
                 </div>
               </div>
               {recommendLoading && recommendSongs.length === 0 && <EmptyState text="載入中…" />}

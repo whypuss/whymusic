@@ -31,6 +31,26 @@ const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
 const STORAGE_PLAY_MODE = 'musicfree-play-mode'
 const STORAGE_FAVORITES = 'musicfree-favorites'
+const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
+
+/**
+ * 推薦分類。名稱只是傳給音源插件的字串，實際對應哪些榜單由插件決定
+ * （見 plugins/whymusic.js 的 CATEGORIES）—— 換榜單不必動前端。
+ *
+ * 粵語排第一且是預設：這個 app 的主要聽眾聽的是港樂，而粵語曲庫在
+ * 各家榜單裡本來就是少數，混進「中文歌曲」只會被國語歌淹掉，所以它
+ * 自己一欄。cpop 用的是網易雲新歌榜／熱歌榜（國語為主），兩者不混。
+ */
+export type RecommendCategory = 'cantonese' | 'cpop' | 'kpop' | 'western'
+export const DEFAULT_RECOMMEND_CATEGORY: RecommendCategory = 'cantonese'
+export const RECOMMEND_CATEGORIES: {
+  value: RecommendCategory; label: string; caption: string
+}[] = [
+  { value: 'cantonese', label: '粵語', caption: '香港叱咤903專業推介' },
+  { value: 'cpop', label: '中文', caption: '網易雲新歌榜／熱歌榜（國語為主）' },
+  { value: 'kpop', label: 'Kpop', caption: '網易雲韓語榜' },
+  { value: 'western', label: '歐美', caption: '網易雲歐美新歌榜／熱歌榜' },
+]
 
 export type PlayMode = 'auto' | 'one' | 'off'
 const PLAY_MODE_ORDER: PlayMode[] = ['auto', 'one', 'off']
@@ -265,7 +285,14 @@ export function useMusicApp() {
   const [searchType, setSearchType] = useState<SearchType>('music')
   const [searchPage, setSearchPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
-  // 推薦頁
+  // 推薦頁：分類（粵語／中文／Kpop／歐美）× 排序（最新／熱門）。
+  // 分類記在 localStorage：常聽粵語的人不該每次開 app 都要再點一次
+  const [recommendCategory, setRecommendCategory] = useState<RecommendCategory>(() => {
+    const saved = localStorage.getItem(STORAGE_RECOMMEND_CAT) as RecommendCategory | null
+    return RECOMMEND_CATEGORIES.some(c => c.value === saved)
+      ? (saved as RecommendCategory)
+      : DEFAULT_RECOMMEND_CATEGORY
+  })
   const [recommendMode, setRecommendMode] = useState<'new' | 'hot'>('new')
   const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
   const [recommendLoading, setRecommendLoading] = useState(false)
@@ -347,7 +374,7 @@ export function useMusicApp() {
   // 進入推薦頁時自動載入
   useEffect(() => {
     if (currentView === 'recommend' && recommendSongs.length === 0) {
-      loadRecommend(recommendMode)
+      loadRecommend(recommendCategory, recommendMode)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView])
@@ -811,17 +838,24 @@ export function useMusicApp() {
     await search(nextPage, true)
   }
 
-  // 載入推薦（最新/熱門）。推薦是音源的能力，逐一問已啟用的插件要，
-  // 沒裝音源就沒有推薦 —— 這樣才與「播放器不認識來源」一致。
-  const loadRecommend = useCallback(async (mode: 'new' | 'hot') => {
+  // 載入推薦：一個分類（粵語／中文／Kpop／歐美）× 一種排序（最新／熱門）。
+  // 推薦是音源的能力，逐一問已啟用的插件要，沒裝音源就沒有推薦 ——
+  // 這樣才與「播放器不認識來源」一致。
+  const loadRecommend = useCallback(async (
+    category: RecommendCategory, mode: 'new' | 'hot',
+  ) => {
+    setRecommendCategory(category)
     setRecommendMode(mode)
+    localStorage.setItem(STORAGE_RECOMMEND_CAT, category)
     setRecommendLoading(true)
     setRecommendUnsupported(false)
+    // 先清空：切分類時若留著舊清單，載入中會看到上一個分類的歌，
+    // 點下去播的也是那一首
+    setRecommendSongs([])
     try {
       await waitForPlugins()
       const enabled = pluginManager.getEnabledPlugins()
       if (enabled.length === 0) {
-        setRecommendSongs([])
         setRecommendUnsupported(true)
         return
       }
@@ -829,7 +863,7 @@ export function useMusicApp() {
       let supported = false
       for (const plugin of enabled) {
         try {
-          const list = await pluginManager.getRecommendForPlugin(plugin.name, mode, 40)
+          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, mode, 40)
           if (list === null) continue  // 該插件不提供推薦
           supported = true
           songs = songs.concat(list)
@@ -848,10 +882,15 @@ export function useMusicApp() {
     }
   }, [])
 
-  // 切換推薦分頁
+  // 切換分類／排序。同一組合已有結果就不重打
+  const switchRecommendCategory = (category: RecommendCategory) => {
+    if (category === recommendCategory && recommendSongs.length > 0) return
+    loadRecommend(category, recommendMode)
+  }
+
   const switchRecommendMode = (mode: 'new' | 'hot') => {
     if (mode === recommendMode && recommendSongs.length > 0) return
-    loadRecommend(mode)
+    loadRecommend(recommendCategory, mode)
   }
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
@@ -1383,6 +1422,7 @@ export function useMusicApp() {
     pluginName,
     pluginToggles,
     pluginUrl,
+    recommendCategory,
     recommendLoading,
     recommendMode,
     recommendSongs,
@@ -1418,6 +1458,7 @@ export function useMusicApp() {
     setPluginToggles,
     setPluginUrl,
     setRecommendLoading,
+    setRecommendCategory,
     setRecommendMode,
     setRecommendSongs,
     setRecommendUnsupported,
@@ -1426,6 +1467,7 @@ export function useMusicApp() {
     setSearchPage,
     setSearchType,
     showNotification,
+    switchRecommendCategory,
     switchRecommendMode,
     togglePlay,
     togglePlugin,
