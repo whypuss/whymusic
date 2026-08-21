@@ -203,13 +203,18 @@ export class PluginManager {
    */
   async getRecommendForPlugin(
     name: string, category: string, limit = 40,
-  ): Promise<MusicItem[] | null> {
+  ): Promise<{ songs: MusicItem[]; caption?: string } | null> {
     const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
     if (!p || !this.enabled.has(p.name)) return null
     const fn = (p as any).getRecommend
     if (typeof fn !== 'function') return null
     const result: any = await fn.call(p, category, limit) ?? {}
-    return this.tagItems(normalizeItemList(result), p.name).slice(0, limit)
+    return {
+      songs: this.tagItems(normalizeItemList(result), p.name).slice(0, limit),
+      // 音源可以自報「這批歌是哪來的」。app 不該知道任何音源用了什麼榜單，
+      // 所以這段說明只能由音源給 —— 沒給就不顯示。
+      caption: typeof result.caption === 'string' ? result.caption : undefined,
+    }
   }
 
   /** 專輯內曲目。插件未實作時回 null */

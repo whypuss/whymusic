@@ -67,9 +67,6 @@ const PORT = Number(process.env.PORT) || 8788
 // node 的埠，反代上設的限流、標頭、TLS 全部被跳過。
 const HOST = process.env.HOST || '0.0.0.0'
 const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
-// 音源插件目錄（repo 根層 plugins/）。由本服務直接供應，執行時不碰 GitHub。
-const PLUGINS_DIR = process.env.PLUGINS_DIR
-  || path.resolve(import.meta.dirname, '../../../plugins')
 
 // /api/proxy 的網域白名單。預設空＝不限制（允許任何公網 host）—— 因為這個 app
 // 刻意支援貼任意第三方插件 URL 與從任意 CDN 播放。想鎖死的營運者可設
@@ -1618,26 +1615,10 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
-    // ── 插件檔 ───────────────────────────────────────────
-    // 音源插件由本服務直接供應，執行時不依賴 GitHub。插件原始碼放在 repo
-    // 的 plugins/，隨部署一起上機；GitHub 只是它在版控裡的位置。
-    // 檔名白名單化，避免 ../ 之類的路徑穿越。
-    if (pathname.startsWith('/plugins/')) {
-      const name = pathname.slice('/plugins/'.length)
-      if (!/^[a-zA-Z0-9_-]+\.js$/.test(name)) {
-        jsonResponse(res, { error: 'Invalid plugin name' }, 400)
-        return
-      }
-      const pluginPath = path.join(PLUGINS_DIR, name)
-      // 插件會被使用者手動「重新載入」，不讓瀏覽器長期快取
-      const servedPlugin = await serveStatic(res, pluginPath, {
-        'Cache-Control': 'no-cache',
-        'Content-Type': 'application/javascript; charset=utf-8',
-      })
-      if (servedPlugin) return
-      jsonResponse(res, { error: `Plugin not found: ${name}` }, 404)
-      return
-    }
+    // 這裡曾經有一條 /plugins/*.js 路由，直接從 repo 的 plugins/ 供應音源檔。
+    // 已移除：那等於本服務隨附了音源，使用者在「設置」頁填 /plugins/whymusic.js
+    // 就能用 —— 而這個專案的立場是音源由使用者自己提供，播放器不預設任何來源。
+    // 要自架音源的人可以把自己的 .js 放進 dist/（或任何支援 CORS 的網址）。
 
     // ── Static files ────────────────────────────────────
     // SPA: serve index.html for non-file routes

@@ -32,25 +32,18 @@ run('pnpm', ['--filter', '@whymusic/web', 'build'])
 // 2) worker → dist/_worker.js（同樣讀 BUILD_STAMP）
 run('node', [path.join(ROOT, 'scripts/build-worker.mjs')])
 
-// 3) 音源插件當靜態檔供應
-const pluginsDst = path.join(DIST, 'plugins')
-fs.mkdirSync(pluginsDst, { recursive: true })
-for (const name of fs.readdirSync(path.join(ROOT, 'plugins'))) {
-  if (name.endsWith('.js')) {
-    fs.copyFileSync(path.join(ROOT, 'plugins', name), path.join(pluginsDst, name))
-  }
-}
-console.log('✓ 已複製音源插件')
-
-// 4) 驗證產物齊全 —— 少了任何一項在線上都是難查的故障
-const required = ['index.html', '_worker.js', 'plugins/whymusic.js']
+// 3) 驗證產物齊全 —— 少了任何一項在線上都是難查的故障。
+//    **不**複製任何音源檔：隨附音源等於替使用者預設了來源，而這個專案的立場是
+//    音源由使用者自己提供（見 README）。音源檔留在 repo 的 plugins/ 供人自行取用，
+//    但不進部署產物。
+const required = ['index.html', '_worker.js']
 const missing = required.filter(f => !fs.existsSync(path.join(DIST, f)))
 if (missing.length > 0) {
   console.error(`✘ 產物缺少：${missing.join(', ')}`)
   process.exit(1)
 }
 
-// 5) 確認兩邊的戳記真的一致（這是 UI 那個警示的前提）
+// 4) 確認兩邊的戳記真的一致（這是 UI 那個警示的前提）
 const workerJs = fs.readFileSync(path.join(DIST, '_worker.js'), 'utf8')
 const frontendJs = fs.readdirSync(path.join(DIST, 'assets'))
   .filter(f => f.endsWith('.js'))

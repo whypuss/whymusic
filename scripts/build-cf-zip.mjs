@@ -27,7 +27,7 @@ function fail(msg) {
   process.exit(1)
 }
 
-for (const f of ['index.html', '_worker.js', 'plugins/whymusic.js']) {
+for (const f of ['index.html', '_worker.js']) {
   if (!fs.existsSync(path.join(DIST, f))) {
     fail(`找不到 packages/web/dist/${f} —— 請先跑 pnpm build:cf`)
   }
@@ -50,20 +50,22 @@ fs.writeFileSync(path.join(STAGE, 'README.txt'), `WhyMusic Web — Cloudflare Pa
   3. 把這個 zip 整包拖進去（不要解壓縮），或解壓後拖整個資料夾
   4. 部署完成後開啟 <你的專案>.pages.dev
 
-匯入音源（播放器預設不附音源）：
-  進站後到「設置」頁，在「從網址安裝」貼上：
-      https://<你的專案>.pages.dev/plugins/whymusic.js
-  按「安裝」即可搜尋與播放。也可以改貼任何其他相容音源的網址。
+匯入音源（**這個包不附帶任何音源**）：
+  播放器本身不認識任何音源，也不預設任何來源 —— 音源要用哪一個由你決定。
+  進站後到「設置」頁的「從網址安裝」，貼上你自己的音源網址並按「安裝」，
+  之後才能搜尋與播放。
+
+  音源是一支符合本專案插件介面的 .js。你可以自己託管一份（放進這個部署的
+  靜態檔、或任何支援 CORS 的網址都行）。
 
 檔案說明：
   index.html / assets/     前端
-  plugins/whymusic.js      音源插件（自行匯入，播放器本身不綁定它）
   _worker.js               後端 API（已打包，CF 不需要再 build）
 
 注意：
   - 儀表板拖拉上傳單檔上限 25 MiB、檔案數上限 1000，本包遠低於此。
   - 選了 Direct Upload 之後無法改成 Git 連動，要自動部署得另建專案。
-  - 音源走公開 API，不需要任何金鑰或環境變數。
+  - 這個包不含音源；前端與後端本身不需要任何金鑰或環境變數。
   - 「設置」頁底部會顯示前端／後端建置戳記，兩者應一致；不一致代表只部署了一半。
   - 「換裝置」的同步碼功能需要一個名為 SYNC 的 KV 綁定，沒綁定時整個區塊會自動
     隱藏，其餘功能完全不受影響。要啟用的話：在 Cloudflare 建一個 KV namespace，

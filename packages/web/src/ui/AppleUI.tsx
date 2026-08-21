@@ -13,7 +13,6 @@ import {
   MusicApp,
   pluginManager,
   APP_VERSION,
-  OFFICIAL_PLUGIN_URL,
   PLAY_MODE_ICON,
   PLAY_MODE_LABEL,
   RECOMMEND_CATEGORIES,
@@ -247,7 +246,8 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
     recommendLoading, recommendSongs, recommendUnsupported, removePlugin,
     results, search,
-    quality, refreshRecommend, removeDownload, searchType, seekTo, serverVersion,
+    quality, recommendCaption, refreshRecommend, removeDownload, searchType, seekTo,
+    serverVersion,
     setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
     syncAvailable, syncBusy,
@@ -341,10 +341,13 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h1 className="text-[34px] font-bold tracking-tight leading-tight">推薦</h1>
-                    {/* 副標說明目前分類的榜單來源，換分類時跟著換 */}
-                    <p className="text-[15px] text-white/45 mt-0.5">
-                      {RECOMMEND_CATEGORIES.find(c => c.value === recommendCategory)?.caption}
-                    </p>
+                    {/*
+                      副標是**音源回報**的來源說明，不是 app 寫死的 —— app 不知道
+                      任何音源用了什麼榜單。音源沒給說明就不顯示這一行。
+                    */}
+                    {recommendCaption && (
+                      <p className="text-[15px] text-white/45 mt-0.5">{recommendCaption}</p>
+                    )}
                   </div>
                   {/*
                     重新整理。有了快取之後這個按鈕才有存在必要 —— 清單可能是幾小時前
@@ -610,19 +613,16 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                                disabled:opacity-40 active:opacity-70 transition">
                     {loading ? '安裝中…' : '安裝'}
                   </button>
+                  {/*
+                    這裡刻意**不**提供任何音源網址。這個 app 不隨附音源、產物裡
+                    沒有任何音源檔，也不預設任何來源 —— 音源要用哪一個由使用者
+                    自己決定並提供。播放器只認插件介面，不認任何特定音源。
+                  */}
                   <div className="text-[12px] text-white/30 leading-relaxed">
                     {pluginUrl.trim()
-                      ? '由本站後端代抓，你的網路不必連得到託管站。'
-                      : '先填入音源網址才能安裝。'}
+                      ? '安裝後即可搜尋與播放。'
+                      : '本 App 不附帶音源。請貼上你自己的音源網址。'}
                   </div>
-                  {/*
-                    內建音源的網址列在這裡（可點擊填入），而不是做成一顆安裝按鈕。
-                    否則清掉瀏覽器資料後沒人知道該貼什麼，等於死路。
-                  */}
-                  <button onClick={() => setPluginUrl(OFFICIAL_PLUGIN_URL)}
-                    className="text-[12px] text-[#0A84FF] active:opacity-60 break-all text-left">
-                    內建音源：{OFFICIAL_PLUGIN_URL}
-                  </button>
                 </div>
               </div>
 

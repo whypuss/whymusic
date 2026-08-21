@@ -21,18 +21,11 @@ export const pluginManager = new PluginManager()
  * 插件呼叫本站後端的 /api/why-* 端點（子音源扇出、OAuth 簽名、跨源救援都在
  * 後端），所以它是為這個播放器寫的，貼到別的客戶端不一定能動。
  */
-export const OFFICIAL_PLUGIN_NAME = 'WhyMusic'
 /**
- * 內建音源的位置。網頁版是 /plugins/whymusic.js；APK 裡改成 /sources/。
- *
- * 為什麼 APK 不能用 /plugins/：Capacitor 把 assets/public/plugins 這個路徑保留給
- * Cordova 插件，每次 `cap sync` 都會 remove 掉整個目錄（見其 cordova.js 的
- * removePluginFiles）。放在那裡的音源會被清掉，於是 APK 裡那個「內建音源」連結
- * 404，使用者拿到一個永遠裝不了音源的 app。改個目錄名就避開了。
+ * 匯入舊格式歌單時，沒記錄 platform 的曲目要掛在哪個音源名下。
+ * 這只是個後備字串，不代表本專案隨附任何音源 —— 產物裡沒有任何音源檔。
  */
-export const OFFICIAL_PLUGIN_URL = isNative()
-  ? '/sources/whymusic.js'
-  : '/plugins/whymusic.js'
+export const FALLBACK_PLATFORM = 'WhyMusic'
 
 /**
  * 前端的建置戳記（vite define 注入）。顯示在「音源」頁，用來判斷線上跑的是哪一版 ——
@@ -94,14 +87,19 @@ const RECOMMEND_LIMIT = 80
  */
 export type RecommendCategory = 'hot' | 'cantonese' | 'cpop' | 'kpop' | 'western'
 export const DEFAULT_RECOMMEND_CATEGORY: RecommendCategory = 'cantonese'
-export const RECOMMEND_CATEGORIES: {
-  value: RecommendCategory; label: string; caption: string
-}[] = [
-  { value: 'hot', label: '熱門', caption: '網易雲熱歌榜' },
-  { value: 'cantonese', label: '粵語', caption: '香港叱咤903專業推介（最新＋熱門）' },
-  { value: 'cpop', label: '中文', caption: '網易雲新歌榜' },
-  { value: 'kpop', label: 'Kpop', caption: '網易雲韓語榜' },
-  { value: 'western', label: '歐美', caption: '網易雲歐美熱歌榜' },
+/**
+ * 標籤只是分類名，**刻意不附任何來源說明**。
+ *
+ * 這裡原本寫著「香港叱咤903專業推介」「網易雲熱歌榜」這種副標 —— 那是某個特定
+ * 音源的實作細節。換一個音源之後畫面還在說它給你叱咤榜，實際上誰知道，等於騙人。
+ * 分類對應哪份榜單是音源的事，要顯示就得由音源自己回報（見 recommendCaption）。
+ */
+export const RECOMMEND_CATEGORIES: { value: RecommendCategory; label: string }[] = [
+  { value: 'hot', label: '熱門' },
+  { value: 'cantonese', label: '粵語' },
+  { value: 'cpop', label: '中文' },
+  { value: 'kpop', label: 'Kpop' },
+  { value: 'western', label: '歐美' },
 ]
 
 export type PlayMode = 'auto' | 'one' | 'off'
@@ -170,16 +168,16 @@ let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 t
 const STORAGE_RECOMMEND_CACHE = 'musicfree-recommend-cache'
 const RECOMMEND_TTL = 6 * 60 * 60 * 1000
 
-type RecommendCacheEntry = { at: number; songs: MusicItem[] }
+type RecommendCacheEntry = { at: number; songs: MusicItem[]; caption?: string }
 
 const readRecommendCache = (
   category: RecommendCategory,
-): { songs: MusicItem[]; fresh: boolean } | null => {
+): { songs: MusicItem[]; caption?: string; fresh: boolean } | null => {
   try {
     const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_CACHE) || '{}')
     const hit: RecommendCacheEntry | undefined = all[category]
     if (!hit || !Array.isArray(hit.songs) || hit.songs.length === 0) return null
-    return { songs: hit.songs, fresh: Date.now() - hit.at < RECOMMEND_TTL }
+    return { songs: hit.songs, caption: hit.caption, fresh: Date.now() - hit.at < RECOMMEND_TTL }
   } catch {
     return null
   }
@@ -192,10 +190,12 @@ const clearRecommendCache = () => {
   } catch { /* 清不掉也無妨，TTL 到了自然會換 */ }
 }
 
-const writeRecommendCache = (category: RecommendCategory, songs: MusicItem[]) => {
+const writeRecommendCache = (
+  category: RecommendCategory, songs: MusicItem[], caption?: string,
+) => {
   try {
     const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_CACHE) || '{}')
-    all[category] = { at: Date.now(), songs }
+    all[category] = { at: Date.now(), songs, caption }
     localStorage.setItem(STORAGE_RECOMMEND_CACHE, JSON.stringify(all))
   } catch (e) {
     // 配額滿或關閉了儲存：快取只是加速，寫不進去不該影響功能
@@ -284,38 +284,10 @@ const initPlugins = async () => {
   // 裝過一次就進 localStorage 快取，之後開啟即載入。
   pluginsReady = true
 
-  // 已裝過內建音源的話，順手比對本站供應的版本，不同就換掉。
-  //
-  // 為什麼要自動換：插件的介面會跟著 app 一起演進，而使用者瀏覽器裡快取的是
-  // 舊那份。兩邊參數對不上時症狀是隱性的 —— 實際踩過一次：app 已經改成傳
-  // (category, limit)，舊插件的簽名還是 (mode, limit)，於是 limit 收到字串、
-  // 裁切失效、回傳整份 1000 首榜單，推薦頁直接卡住。使用者看不出要去按「更新」，
-  // 只會覺得「這東西壞了」。版本比對很便宜（同源、十幾 KB），值得每次開 app 做。
-  await refreshOfficialPluginIfStale()
+  // 這裡刻意不自動去抓任何音源。app 不隨附音源，也不知道任何音源的位址 ——
+  // 使用者裝過的那份存在 localStorage，要換版就自己重貼一次網址。
 }
 
-/**
- * 本站供應的內建音源若與快取那份不同就換掉。失敗不影響已載入的那份。
- *
- * 比對的是原始碼字串而不是版號 —— 版號可能忘記加，而原始碼一字不差才代表
- * 真的是同一份。抓的是同源檔案（十幾 KB），成本可以忽略。
- */
-const refreshOfficialPluginIfStale = async (): Promise<void> => {
-  const cached = readCachedPlugins().find(p => p.name === OFFICIAL_PLUGIN_NAME)
-  if (!cached) return
-  try {
-    const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL, true)
-    if (code === cached.code) return
-    const before = pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version
-    const registered = loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
-    if (!cached.enabled) pluginManager.setPluginEnabled(registered, false)
-    writeCachedPlugin(registered, code, cached.enabled)
-    const after = pluginManager.getPlugin(registered)?.version
-    console.log(`[init] 內建音源自動更新 v${before} → v${after}`)
-  } catch (e) {
-    console.warn('[init] 內建音源版本比對失敗，沿用快取那份:', e)
-  }
-}
 
 // 公開的等待方法
 const waitForPlugins = async (): Promise<boolean> => {
@@ -454,6 +426,11 @@ export function useMusicApp() {
       : DEFAULT_RECOMMEND_CATEGORY
   })
   const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
+  /**
+   * 目前這批推薦的來源說明，由音源回報（見插件的 getRecommend）。
+   * app 自己不知道任何音源用了什麼榜單，所以音源沒給就不顯示。
+   */
+  const [recommendCaption, setRecommendCaption] = useState('')
   const [recommendLoading, setRecommendLoading] = useState(false)
   // 沒有任何已啟用插件、或插件不提供推薦 → 要能區分於「推薦回空清單」
   const [recommendUnsupported, setRecommendUnsupported] = useState(false)
@@ -495,13 +472,6 @@ export function useMusicApp() {
   const historyRef = useRef<{ item: MusicItem; index: number }[]>([])
   /** 當前曲目的 ref。play() 要讀「上一首是誰」來推歷史，讀 state 會拿到舊值 */
   const playingItemRef = useRef<MusicItem | null>(null)
-
-  // 依賴 pluginKey 來觸發重渲染
-  /** 內置音源是否已安裝。依 pluginKey 重算（安裝／移除／啟用都會遞增它） */
-  const officialInstalled = useMemo(
-    () => !!pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME),
-    [pluginKey],
-  )
 
   useEffect(() => {
     const initializeState = async () => {
@@ -1078,6 +1048,7 @@ export function useMusicApp() {
     if (cached) {
       // 先給畫面。不轉圈 —— 使用者要的是「馬上看到歌」
       setRecommendSongs(cached.songs)
+      setRecommendCaption(cached.caption || '')
       setRecommendLoading(false)
       if (cached.fresh) return
       // 過期了：畫面留著舊的，背景靜靜換新（失敗就繼續用舊的，總比空白好）
@@ -1096,13 +1067,16 @@ export function useMusicApp() {
         return
       }
       let songs: MusicItem[] = []
+      let caption = ''
       let supported = false
       for (const plugin of enabled) {
         try {
-          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, RECOMMEND_LIMIT)
-          if (list === null) continue  // 該插件不提供推薦
+          const res = await pluginManager.getRecommendForPlugin(plugin.name, category, RECOMMEND_LIMIT)
+          if (res === null) continue  // 該插件不提供推薦
           supported = true
-          songs = songs.concat(list)
+          songs = songs.concat(res.songs)
+          // 第一個有給說明的音源說了算。多個音源同時提供推薦時硬要合併說明只會很亂
+          if (!caption && res.caption) caption = res.caption
         } catch (e) {
           console.error(`[recommend] ${plugin.name} 失敗:`, e)
         }
@@ -1110,9 +1084,11 @@ export function useMusicApp() {
       // 抓到東西才覆蓋畫面與快取。空結果不要蓋掉手上可用的舊清單
       if (songs.length > 0) {
         setRecommendSongs(songs)
-        writeRecommendCache(category, songs)
+        setRecommendCaption(caption)
+        writeRecommendCache(category, songs, caption)
       } else if (!cached) {
         setRecommendSongs(songs)
+        setRecommendCaption(caption)
       }
       if (!cached || songs.length > 0) setRecommendUnsupported(!supported)
     } catch (e) {
@@ -1265,7 +1241,7 @@ export function useMusicApp() {
         const parsed = JSON.parse(embedded[1].trim())
         const items: MusicItem[] = parsed.map((x: any) => ({
           id: String(x.i), title: x.t || '', artist: x.a || '', album: x.b || '',
-          platform: x.p || OFFICIAL_PLUGIN_NAME, subSource: x.s || '',
+          platform: x.p || FALLBACK_PLATFORM, subSource: x.s || '',
           picId: x.c || '', lyricId: x.l || '', artwork: x.w || '',
           duration: x.d || 0, type: 'music',
         }))
@@ -1454,38 +1430,6 @@ export function useMusicApp() {
     }
   }
 
-  // 依賴 pluginKey 來觸發重渲染，確保官方插件狀態正確
-  /**
-   * 安裝或更新內置音源（同源 /plugins/whymusic.js）。
-   * 首次是「安裝」，之後是「更新」—— 換掉插件檔後按這個才會生效，
-   * 否則會一直用 localStorage 裡的舊版本。
-   */
-  const installOfficialPlugin = async () => {
-    setReloadingPlugin(true)
-    try {
-      const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL, true)
-      pluginManager.removePlugin(OFFICIAL_PLUGIN_NAME)
-      const registered = loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
-      writeCachedPlugin(registered, code)
-      setPluginToggles(prev => ({ ...prev, [registered]: true }))
-      setPluginKey(k => k + 1)
-      setPluginError(null)
-      // 帶上版本，使用者才看得出到底有沒有真的換版（先前只說「成功」，
-      // 抓回舊碼時完全看不出來）
-      // 清掉舊清單與快取，回推薦頁時會用新音源重新載入 —— 快取裡那份是舊音源
-      // 給的資料，留著會讓人以為換版沒生效
-      setRecommendSongs([])
-      clearRecommendCache()
-      const version = pluginManager.getPlugin(registered)?.version || '?'
-      showNotification(`已安裝 ${registered} v${version}`, 'success')
-    } catch (e: any) {
-      const msg = `安裝失敗：${e?.message || e}`
-      setPluginError(msg)
-      showNotification(msg, 'error')
-    } finally {
-      setReloadingPlugin(false)
-    }
-  }
 
   const removePlugin = (name: string) => {
     pluginManager.removePlugin(name)
@@ -1648,7 +1592,6 @@ export function useMusicApp() {
     handleItemClick,
     handleSearchSubmit,
     hasMore,
-    installOfficialPlugin,
     installPluginFromURL,
     isPlaying,
     keyword,
@@ -1659,7 +1602,6 @@ export function useMusicApp() {
     loadingMore,
     lockedItem,
     notification,
-    officialInstalled,
     play,
     playNext,
     playPrev,
@@ -1671,6 +1613,7 @@ export function useMusicApp() {
     pluginName,
     pluginToggles,
     pluginUrl,
+    recommendCaption,
     recommendCategory,
     refreshRecommend,
     recommendLoading,
