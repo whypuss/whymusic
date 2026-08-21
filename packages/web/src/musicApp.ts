@@ -34,22 +34,25 @@ const STORAGE_FAVORITES = 'musicfree-favorites'
 const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
 
 /**
- * 推薦分類。名稱只是傳給音源插件的字串，實際對應哪些榜單由插件決定
- * （見 plugins/whymusic.js 的 CATEGORIES）—— 換榜單不必動前端。
+ * 推薦分類。一排五個標籤，沒有第二個軸 —— 榜單本身就是排好序的，再給
+ * 「最新／熱門」兩種排法只是讓一個分類要抓兩次、頁面多兩行按鈕。
  *
- * 粵語排第一且是預設：這個 app 的主要聽眾聽的是港樂，而粵語曲庫在
- * 各家榜單裡本來就是少數，混進「中文歌曲」只會被國語歌淹掉，所以它
- * 自己一欄。cpop 用的是網易雲新歌榜／熱歌榜（國語為主），兩者不混。
+ * 名稱只是傳給音源插件的字串，實際對應哪份榜單由插件與後端決定
+ * （見 plugins/whymusic.js 與 worker/why.js 的 CATEGORIES）—— 換榜單不必動前端。
+ *
+ * 粵語是預設：這個 app 主要在聽港樂，而粵語曲庫在各家榜單裡本來就是少數，
+ * 混進「中文」只會被國語歌淹掉，所以它自己一欄。
  */
-export type RecommendCategory = 'cantonese' | 'cpop' | 'kpop' | 'western'
+export type RecommendCategory = 'hot' | 'cantonese' | 'cpop' | 'kpop' | 'western'
 export const DEFAULT_RECOMMEND_CATEGORY: RecommendCategory = 'cantonese'
 export const RECOMMEND_CATEGORIES: {
   value: RecommendCategory; label: string; caption: string
 }[] = [
+  { value: 'hot', label: '熱門', caption: '網易雲熱歌榜' },
   { value: 'cantonese', label: '粵語', caption: '香港叱咤903專業推介' },
-  { value: 'cpop', label: '中文', caption: '網易雲新歌榜／熱歌榜（國語為主）' },
+  { value: 'cpop', label: '中文', caption: '網易雲新歌榜' },
   { value: 'kpop', label: 'Kpop', caption: '網易雲韓語榜' },
-  { value: 'western', label: '歐美', caption: '網易雲歐美新歌榜／熱歌榜' },
+  { value: 'western', label: '歐美', caption: '網易雲歐美熱歌榜' },
 ]
 
 export type PlayMode = 'auto' | 'one' | 'off'
@@ -188,6 +191,38 @@ const initPlugins = async () => {
   // （內置音源列在那裡可一鍵安裝，也可貼任意第三方插件 URL）。
   // 裝過一次就進 localStorage 快取，之後開啟即載入。
   pluginsReady = true
+
+  // 已裝過內建音源的話，順手比對本站供應的版本，不同就換掉。
+  //
+  // 為什麼要自動換：插件的介面會跟著 app 一起演進，而使用者瀏覽器裡快取的是
+  // 舊那份。兩邊參數對不上時症狀是隱性的 —— 實際踩過一次：app 已經改成傳
+  // (category, limit)，舊插件的簽名還是 (mode, limit)，於是 limit 收到字串、
+  // 裁切失效、回傳整份 1000 首榜單，推薦頁直接卡住。使用者看不出要去按「更新」，
+  // 只會覺得「這東西壞了」。版本比對很便宜（同源、十幾 KB），值得每次開 app 做。
+  await refreshOfficialPluginIfStale()
+}
+
+/**
+ * 本站供應的內建音源若與快取那份不同就換掉。失敗不影響已載入的那份。
+ *
+ * 比對的是原始碼字串而不是版號 —— 版號可能忘記加，而原始碼一字不差才代表
+ * 真的是同一份。抓的是同源檔案（十幾 KB），成本可以忽略。
+ */
+const refreshOfficialPluginIfStale = async (): Promise<void> => {
+  const cached = readCachedPlugins().find(p => p.name === OFFICIAL_PLUGIN_NAME)
+  if (!cached) return
+  try {
+    const code = await fetchPluginCode(OFFICIAL_PLUGIN_URL, true)
+    if (code === cached.code) return
+    const before = pluginManager.getPlugin(OFFICIAL_PLUGIN_NAME)?.version
+    const registered = loadPluginCode(code, OFFICIAL_PLUGIN_NAME)
+    if (!cached.enabled) pluginManager.setPluginEnabled(registered, false)
+    writeCachedPlugin(registered, code, cached.enabled)
+    const after = pluginManager.getPlugin(registered)?.version
+    console.log(`[init] 內建音源自動更新 v${before} → v${after}`)
+  } catch (e) {
+    console.warn('[init] 內建音源版本比對失敗，沿用快取那份:', e)
+  }
 }
 
 // 公開的等待方法
@@ -293,7 +328,6 @@ export function useMusicApp() {
       ? (saved as RecommendCategory)
       : DEFAULT_RECOMMEND_CATEGORY
   })
-  const [recommendMode, setRecommendMode] = useState<'new' | 'hot'>('new')
   const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
   const [recommendLoading, setRecommendLoading] = useState(false)
   // 沒有任何已啟用插件、或插件不提供推薦 → 要能區分於「推薦回空清單」
@@ -374,7 +408,7 @@ export function useMusicApp() {
   // 進入推薦頁時自動載入
   useEffect(() => {
     if (currentView === 'recommend' && recommendSongs.length === 0) {
-      loadRecommend(recommendCategory, recommendMode)
+      loadRecommend(recommendCategory)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView])
@@ -838,14 +872,10 @@ export function useMusicApp() {
     await search(nextPage, true)
   }
 
-  // 載入推薦：一個分類（粵語／中文／Kpop／歐美）× 一種排序（最新／熱門）。
-  // 推薦是音源的能力，逐一問已啟用的插件要，沒裝音源就沒有推薦 ——
-  // 這樣才與「播放器不認識來源」一致。
-  const loadRecommend = useCallback(async (
-    category: RecommendCategory, mode: 'new' | 'hot',
-  ) => {
+  // 載入推薦：一個分類一份榜單。推薦是音源的能力，逐一問已啟用的插件要，
+  // 沒裝音源就沒有推薦 —— 這樣才與「播放器不認識來源」一致。
+  const loadRecommend = useCallback(async (category: RecommendCategory) => {
     setRecommendCategory(category)
-    setRecommendMode(mode)
     localStorage.setItem(STORAGE_RECOMMEND_CAT, category)
     setRecommendLoading(true)
     setRecommendUnsupported(false)
@@ -863,7 +893,7 @@ export function useMusicApp() {
       let supported = false
       for (const plugin of enabled) {
         try {
-          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, mode, 40)
+          const list = await pluginManager.getRecommendForPlugin(plugin.name, category, 40)
           if (list === null) continue  // 該插件不提供推薦
           supported = true
           songs = songs.concat(list)
@@ -882,15 +912,10 @@ export function useMusicApp() {
     }
   }, [])
 
-  // 切換分類／排序。同一組合已有結果就不重打
+  // 切換分類。同一個分類已有結果就不重打
   const switchRecommendCategory = (category: RecommendCategory) => {
     if (category === recommendCategory && recommendSongs.length > 0) return
-    loadRecommend(category, recommendMode)
-  }
-
-  const switchRecommendMode = (mode: 'new' | 'hot') => {
-    if (mode === recommendMode && recommendSongs.length > 0) return
-    loadRecommend(recommendCategory, mode)
+    loadRecommend(category)
   }
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
@@ -1424,7 +1449,6 @@ export function useMusicApp() {
     pluginUrl,
     recommendCategory,
     recommendLoading,
-    recommendMode,
     recommendSongs,
     recommendUnsupported,
     reloadingPlugin,
@@ -1459,7 +1483,6 @@ export function useMusicApp() {
     setPluginUrl,
     setRecommendLoading,
     setRecommendCategory,
-    setRecommendMode,
     setRecommendSongs,
     setRecommendUnsupported,
     setReloadingPlugin,
@@ -1468,7 +1491,6 @@ export function useMusicApp() {
     setSearchType,
     showNotification,
     switchRecommendCategory,
-    switchRecommendMode,
     togglePlay,
     togglePlugin,
   }

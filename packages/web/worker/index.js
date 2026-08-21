@@ -17,6 +17,8 @@ import {
   getWhyMusicLyric,
   getWhyMusicPic,
   recommendWhyMusic,
+  RECOMMEND_CATEGORIES,
+  DEFAULT_CATEGORY,
   jsonResponse,
   GD_BITRATE,
 } from './why.js'
@@ -173,9 +175,15 @@ async function handleApi(pathname, request, url, env) {
     }
 
     case '/api/recommend': {
-      const mode = url.searchParams.get('mode') || 'hot'
-      const limit = parseInt(url.searchParams.get('limit') || '40', 10)
-      return jsonResponse({ mode, data: await recommendWhyMusic(mode, limit) })
+      // cat = 分類（hot / cantonese / cpop / kpop / western），各對一份網易雲榜單。
+      // 插件先打這裡拿裁切過的結果，打不通才自己直連 GD。認不出的 cat 退回預設
+      // 而不是回 400 —— 舊版插件不帶它。
+      const requested = url.searchParams.get('cat') || ''
+      const category = RECOMMEND_CATEGORIES.includes(requested) ? requested : DEFAULT_CATEGORY
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '40', 10) || 40))
+      return jsonResponse({
+        category, data: await recommendWhyMusic(category, limit),
+      })
     }
 
 

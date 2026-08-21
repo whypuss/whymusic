@@ -173,36 +173,24 @@ const WHY_SOURCES = ('netease,joox')
 const GD_SOURCES = WHY_SOURCES.filter(s => s !== AUDIOMACK_SOURCE)
 const GD_BITRATE = 320
 
-// 推薦頁資料來源：香港叱咤903專業推介（商業電台的粵語流行榜，每週更新）。
-// playlist 回應自帶封面、時長、發行日與熱度，不必逐首打 types=pic。
+// 推薦頁的五個分類，一個分類對一份網易雲榜單（與 plugins/whymusic.js 的
+// CATEGORIES 是同一份對應，兩邊都要能獨立運作：插件先問這裡，這裡不通它才直連）。
 //
-// 為什麼是這個榜（2026-08-18 實測）：
-//   - 原本的「香港電台中文歌曲龍虎榜」(10169002) 最後更新是 2020-01-10、只有
-//     13 首，「最新」推薦的其實是六年前的歌。
-//   - 網易雲的新歌榜/熱歌榜/飆升榜雖然天天更新，但清一色國語內地歌，不是港樂。
-//   - 叱咤903 這份更新到 2026-08-17，1000+ 首且全是粵語港樂（周國賢、陳蕾、
-//     Gareth.T、MC 張天賦、Zpecial…），本身已按發行時間降序排列。
-const GD_TOPLISTS = {
-  // 兩個 id 都是叱咤903，前者是每週更新的主榜，後者是年度榜（備援，
-  // 主榜若被刪除或改私密仍有東西可回）
-  new: ['5097494848', '13483749530'],
-  hot: ['5097494848', '13483749530'],
+// 這個端點存在的意義就是**把量壓下來**：榜單原始回應 200KB–2.4MB（叱咤903 是
+// 1000 首／2.4MB），瀏覽器直連要 4 秒以上，而這裡抓過一次就進 TTL 快取、對外
+// 只回裁切後的幾十首 ≈ 15KB，全站共用。
+//
+// 榜單本身已排好序（排行榜的順序就是它的意義），所以不再有「最新／熱門」兩種排法。
+const GD_CATEGORIES = {
+  hot: '3778678',          // 熱歌榜（每小時更新，跨語種總熱門）
+  cantonese: '5097494848', // 香港叱咤903專業推介 —— 唯一還在更新的粵語榜
+  cpop: '3779629',         // 新歌榜（華語為主，每天更新）
+  kpop: '745956260',       // 韓語榜（每天更新）
+  western: '2809513713',   // 歐美熱歌榜（每天更新）
 }
-
-/**
- * 推薦排序：
- *   new — 沿用榜單原順序（叱咤榜本身最新在前）
- *   hot — 按 netease 的 pop 熱度（0–100）降序；同熱度以發行時間新者優先，
- *         否則前段會擠滿一堆 pop=100 的曲目而順序無意義
- */
-function sortTracksByMode(tracks, mode) {
-  if (mode !== 'hot') return tracks
-  return [...tracks].sort((a, b) => {
-    const popDiff = (b.pop ?? 0) - (a.pop ?? 0)
-    if (popDiff !== 0) return popDiff
-    return (b.publishTime ?? 0) - (a.publishTime ?? 0)
-  })
-}
+const DEFAULT_CATEGORY = 'cantonese'
+/** 給路由層驗證用（收到沒見過的 cat 就退回預設） */
+const RECOMMEND_CATEGORIES = Object.keys(GD_CATEGORIES)
 
 // 上游按 IP 限流，而本服務所有使用者共用同一出口 IP，故一律走 TTL 快取。
 const GD_TTL = { search: 600e3, url: 1200e3, pic: 864e5, lyric: 864e5, playlist: 1800e3 }
@@ -471,51 +459,52 @@ async function getWhyMusicPic(picId, source, size = 500) {
 }
 
 /** 推薦頁：香港叱咤903榜單（回應自帶封面，無需逐首取圖） */
-async function recommendWhyMusic(mode = 'hot', limit = 40) {
-  const listIds = GD_TOPLISTS[mode] || GD_TOPLISTS.hot
+/** 網易雲榜單曲目 → 本站 MusicItem（缺 id 或歌名的丟掉） */
+function gdTrackToItem(track) {
+  const title = String(track.name || '')
+  if (!track.id || !title) return null
+  const album = track.al || track.album || {}
+  return {
+    id: String(track.id),
+    title,
+    artist: (track.ar || track.artists || []).map(a => a.name).filter(Boolean).join(' / '),
+    album: String(album.name || ''),
+    artwork: album.picUrl || '',
+    platform: 'WhyMusic',
+    subSource: 'netease',
+    picId: album.pic_str || (album.pic != null ? String(album.pic) : ''),
+    lyricId: String(track.id),
+    duration: track.dt ? Math.round(track.dt / 1000) : 0,
+    type: 'music',
+  }
+}
+
+/**
+ * 推薦：取一份榜單、去重、裁到 limit。
+ *
+ * 裁切後的結果自己進快取（鍵含 limit），而不是只靠 gdRequest 快取原始回應 ——
+ * 叱咤那份解析後在記憶體裡是好幾十 MB，這台機器只有 256MB，留著整份不划算。
+ */
+async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
+  const listId = GD_CATEGORIES[category] || GD_CATEGORIES[DEFAULT_CATEGORY]
+  const cacheKey = `rec:${listId}:${limit}`
+  const cached = gdCacheGet(cacheKey)
+  if (cached !== undefined) return cached
+
+  const data = await gdRequest('playlist', { source: 'netease', id: listId })
+  const tracks = data?.playlist?.tracks || []
   const seen = new Set()
   const out = []
-  const errors = []
-  for (const listId of listIds) {
+  for (const track of tracks) {
     if (out.length >= limit) break
-    let tracks = []
-    try {
-      const data = await gdRequest('playlist', { source: 'netease', id: listId })
-      tracks = sortTracksByMode(data?.playlist?.tracks || [], mode)
-    } catch (err) {
-      console.error(`[gd] playlist ${listId} failed: ${err.message}`)
-      errors.push(`${listId}（${err.message}）`)
-      continue
-    }
-    for (const track of tracks) {
-      if (out.length >= limit) break
-      const title = String(track.name || '')
-      if (!track.id || !title) continue
-      const album = track.al || track.album || {}
-      const artist = (track.ar || track.artists || [])
-        .map(a => a.name).filter(Boolean).join(' / ')
-      const key = `${gdNormalizeName(title)}::${gdNormalizeName(artist)}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      out.push({
-        id: String(track.id),
-        title,
-        artist,
-        album: String(album.name || ''),
-        artwork: album.picUrl || '',
-        platform: 'WhyMusic',
-        subSource: 'netease',
-        picId: album.pic_str || (album.pic != null ? String(album.pic) : ''),
-        lyricId: String(track.id),
-        duration: track.dt ? Math.round(track.dt / 1000) : 0,
-        type: 'music',
-      })
-    }
+    const item = gdTrackToItem(track)
+    if (!item) continue
+    const key = `${gdNormalizeName(item.title)}::${gdNormalizeName(item.artist)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
   }
-  // 同上：榜單全取不到就要拋錯，別讓推薦頁靜靜地空著
-  if (out.length === 0 && errors.length > 0) {
-    throw new Error(`榜單全部取不到：${errors.join('；')}`)
-  }
+  gdCacheSet(cacheKey, out, GD_TTL.playlist)
   return out
 }
 
@@ -526,6 +515,8 @@ export {
   getWhyMusicLyric,
   getWhyMusicPic,
   recommendWhyMusic,
+  RECOMMEND_CATEGORIES,
+  DEFAULT_CATEGORY,
   audiomackContainerToWhyItem,
   searchAudiomack,
   getAudiomackAlbumOrSheet,

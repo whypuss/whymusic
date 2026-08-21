@@ -194,17 +194,22 @@ export class PluginManager {
   /**
    * 推薦歌曲。本專案擴充的介面，插件未實作時回 null，
    * 讓 UI 能明確告知「此音源不支援推薦」而不是顯示空清單。
-   * category: 分類名稱（如 "cantonese", "cpop", "kpop", "western"）
+   * category: 分類名稱（"hot" / "cantonese" / "cpop" / "kpop" / "western"）
+   *
+   * 回傳一律裁到 limit：插件版本與 app 不一致時（使用者瀏覽器裡快取著舊插件）
+   * 參數位置會錯位，舊插件曾因此把 limit 收成字串、裁切失效，回傳整份 1000 首
+   * 榜單，UI 要渲染上千列，看起來就是「卡死打不開」。這裡兜底一次，不管插件
+   * 給多少都不會炸到畫面。
    */
   async getRecommendForPlugin(
-    name: string, category: string, mode: string, limit = 40,
+    name: string, category: string, limit = 40,
   ): Promise<MusicItem[] | null> {
     const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
     if (!p || !this.enabled.has(p.name)) return null
     const fn = (p as any).getRecommend
     if (typeof fn !== 'function') return null
-    const result: any = await fn.call(p, category, mode, limit) ?? {}
-    return this.tagItems(normalizeItemList(result), p.name)
+    const result: any = await fn.call(p, category, limit) ?? {}
+    return this.tagItems(normalizeItemList(result), p.name).slice(0, limit)
   }
 
   /** 專輯內曲目。插件未實作時回 null */
