@@ -14,16 +14,17 @@
 | 安裝 | `pnpm deploy:cf` | 上傳 zip | `sh deploy/install.sh`（自動偵測 systemd/OpenRC） |
 | 功能 | 完整 | 完整 | 完整 |
 | 更新方式 | `pnpm deploy:cf` | 重新上傳 zip | `git pull` + 重跑 install.sh |
-| 設定方式 | 改 `plugins/whymusic.js` | 同 A | 環境變數（`/etc/whymusic.env`） |
+| 設定方式 | 音源自己的設定 | 同 A | 環境變數（`/etc/whymusic.env`） |
 | 上游快取 | 只在單一 isolate 內 | 同 A | 全站共用 |
 
 三種方式功能相同。音源邏輯（子源扇出、繁簡歸一化、跨子源救援）在插件裡、由瀏覽器
 執行，所以三種部署共用同一份；後端只負責供應靜態檔、跨域代抓與配對碼。
 
-> **不需要任何金鑰或環境變數。** 兩個子音源（netease / joox）都走公開 API。
+> **前端與後端本身不需要任何金鑰或環境變數。** 音源要不要金鑰是那個音源的事。
 
-**所有方式部署完成後，都要先到「設置」頁安裝音源** —— app 出廠不帶音源，
-不裝就搜不到也播不了。網址是 `/plugins/whymusic.js`，該頁點一下會自動填入。
+**所有方式部署完成後，都要先到「設置」頁安裝音源。** 這個專案**不隨附音源**，
+產物與 repo 裡都沒有任何音源檔 —— 播放器不預設任何來源，音源要用哪一個由你提供。
+到「設置」頁貼上你自己的音源網址（要能被瀏覽器抓到：同源、或對方送 CORS 標頭）。
 
 ---
 
@@ -52,8 +53,8 @@ wrangler login
 pnpm deploy:cf
 ```
 
-這一個指令做完四件事：編譯前端 → 把 API 打包成 `dist/_worker.js` →
-把音源插件複製進 `dist/plugins/` → 上傳。
+這一個指令做完三件事：編譯前端 → 把 API 打包成 `dist/_worker.js` → 上傳。
+（不含音源 —— 產物裡不會有任何音源檔。）
 
 完成後開啟 `https://<專案名>.pages.dev`。
 
@@ -91,9 +92,8 @@ id = "你拿到的 id"
 > - 建置指令設成 **`pnpm build:cf`**（不是 `pnpm build`）
 > - 輸出目錄設成 **`packages/web/dist`**
 >
-> 用 `pnpm build` 會踩到一個很難查的坑：它不產生 `_worker.js` 也不複製
-> `plugins/`，結果所有 `/api/*` 會落到 SPA fallback 回 index.html，
-> 整站搜不到也播不了 —— 但首頁看起來完全正常。
+> 用 `pnpm build` 會踩到一個很難查的坑：它不產生 `_worker.js`，
+> 結果所有 `/api/*` 會落到 SPA fallback 回 index.html —— 但首頁看起來完全正常。
 
 ---
 
@@ -103,7 +103,7 @@ id = "你拿到的 id"
 
 ```bash
 pnpm install
-pnpm build:zip      # → dist-cf/musicweb-cf.zip（約 0.6 MiB，15 個檔）
+pnpm build:zip      # → dist-cf/musicweb-cf.zip（不含音源）
 ```
 
 把 zip 交給對方，他只要：
@@ -181,7 +181,6 @@ sudo SERVICE_USER=whymusic ENV_FILE=/etc/whymusic.env sh deploy/install.sh
 | `PROXY_ALLOWED_HOSTS` | 空（不限制） | `/api/proxy` 網域白名單，逗號分隔。私有網段永遠擋，不受此影響 |
 | `PROXY_RATE_CAPACITY` | `60` | `/api/proxy` 每 IP 限流容量。設 `0` 關閉（公開時不建議） |
 | `PROXY_RATE_REFILL` | `5` | 每秒回補（≈長期每秒上限） |
-| `PLUGINS_DIR` | repo 的 `plugins/` | 音源插件目錄 |
 | `SYNC_DIR` | repo 的 `.sync/` | 裝置配對碼的暫存目錄 |
 | `BUILD_STAMP` | install.sh 填 | 建置戳記，每次安裝自動更新，不必手改 |
 
@@ -229,16 +228,17 @@ docker run -d -p 8788:8788 -e HOST=0.0.0.0 --name whymusic whymusic
 ## 常見問題
 
 **Q: 開站後搜尋顯示「搜尋需要音源」？**
-A: 正常 —— app 出廠不帶音源。到「設置」頁，點「內建音源：/plugins/whymusic.js」
-把網址填入，按「安裝」即可。裝過一次會存進 localStorage，之後開啟自動載入。
+A: 正常 —— 這個專案不隨附音源。到「設置」頁貼上你自己的音源網址並按「安裝」。
+裝過一次會存進 localStorage，之後開啟自動載入。
 
 **Q: 所有 `/api/*` 都回 HTML，首頁卻正常？**
 A: `_worker.js` 沒被部署（CF）或 API 路由沒生效。CF 版請確認用的是
 `pnpm build:cf` 而非 `pnpm build`。
 
-**Q: `/plugins/whymusic.js` 回 404？**
-A: 部署時漏了 `plugins/` 目錄。CF 版用 `build:cf` 會自動複製；自建版要確認
-`plugins/` 有上傳，或用 `PLUGINS_DIR` 指到正確位置。
+**Q: 音源網址裝不上，說「回應不是插件代碼」？**
+A: 那個網址沒有回傳插件原始碼。常見原因：路徑不存在（伺服器把它當前端路由、
+回了 index.html），或對方站點沒送 CORS 標頭。確認該網址用瀏覽器直接開會看到
+JS 原始碼。
 
 **Q: 換版後看到的還是舊介面／舊行為？**
 A: 硬重載一次。API 回應已帶 `Cache-Control: no-store`，前端資源檔名帶內容雜湊，
@@ -266,9 +266,9 @@ curl -s https://你的站/api/version
 
 | 問題 | 原因 | 解決 |
 |------|------|------|
-| 搜尋顯示「需要音源」 | 還沒安裝音源 | 「設置」頁貼 `/plugins/whymusic.js` 安裝 |
+| 搜尋顯示「需要音源」 | 還沒安裝音源 | 「設置」頁貼上你自己的音源網址 |
 | `/api/*` 回 HTML | `_worker.js` 沒部署 | 用 `pnpm build:cf` 重新部署 |
-| `/plugins/*.js` 404 | 漏傳 `plugins/` | 補上，或設 `PLUGINS_DIR` |
+| 音源裝不上 | 網址不回 JS 或無 CORS | 用瀏覽器直接開那個網址確認 |
 | 播放中斷 | nginx 緩衝沒關 | 加 `proxy_buffering off;` |
 | 重開機後站掛掉 | 服務沒設開機自啟 | `systemctl enable` / `rc-update add` |
 

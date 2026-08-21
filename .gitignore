@@ -17,3 +17,8 @@ android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
 android/local.properties
 android/capacitor-cordova-android-plugins/
+
+# 音源插件只存在本地，不進版控。
+# 這個播放器不隨附音源、也不預設任何來源 —— 音源由使用者自己提供。
+# repo 裡不該有任何音源檔（產物端另有守衛，見 scripts/build-apk.mjs）。
+plugins/
