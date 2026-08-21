@@ -97,5 +97,11 @@ console.log(`\n✓ ${path.relative(ROOT, apk)}  (${mb} MiB, ${variant})`)
 if (variant === 'debug') {
   console.log('  debug 版已用 debug key 簽名，可直接安裝：adb install -r <上面那個路徑>')
 } else {
-  console.log('  release 版未簽名，要簽過才能安裝（apksigner）')
+  const keyProps = process.env.WHYMUSIC_KEY_PROPS
+    || path.join(process.env.HOME || '', 'whymusic-keys/key.properties')
+  if (fs.existsSync(keyProps)) {
+    console.log(`  release 版已用正式鑰匙簽名（${keyProps}），可直接安裝與覆蓋升級`)
+  } else {
+    console.log('  找不到 ~/whymusic-keys/key.properties —— release 版未簽名，要簽過才能安裝')
+  }
 }
