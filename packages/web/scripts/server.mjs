@@ -1356,11 +1356,10 @@ const server = http.createServer(async (req, res) => {
 
     // ── API: /api/play ───────────────────────────────────
     // 統一音源流端點：所有平台的音頻都透過這個端點流回前端
-    // 參數：id, platform, quality (可選)
+    // 參數：id, platform
     if (pathname === '/api/play') {
       const playId = url.searchParams.get('id')
       const playPlatform = url.searchParams.get('platform') || ''
-      const quality = url.searchParams.get('quality') || ''
       if (!playId || !playPlatform) {
         jsonResponse(res, { error: 'Missing id or platform' }, 400)
         return
@@ -1384,20 +1383,6 @@ const server = http.createServer(async (req, res) => {
             artist: url.searchParams.get('artist') || '',
           })
           mediaUrl = resolved?.url || null
-        } else if (playPlatform === '猫耳FM') {
-          // 猫耳FM: 後端調用 getsound API 拿音源 URL
-          const mRes = await fetch(`https://www.missevan.com/sound/getsound?soundid=${playId}`, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'application/json',
-              'Referer': `https://www.missevan.com/sound/player?id=${playId}`,
-            },
-          })
-          if (mRes.ok) {
-            const mData = await mRes.json()
-            const sound = mData.info?.sound || {}
-            mediaUrl = quality === 'low' ? sound.soundurl_128 : sound.soundurl
-          }
         }
       } catch (err) {
         console.error(`[play] Failed for ${playPlatform}/${playId}:`, err.message)
@@ -1414,10 +1399,6 @@ const server = http.createServer(async (req, res) => {
       const playHeaders = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': '*/*',
-      }
-      // 貓耳FM 需要 Referer
-      if (playPlatform === '猫耳FM') {
-        playHeaders['Referer'] = `https://www.missevan.com/sound/player?id=${playId}`
       }
       // 傳遞 Range
       if (req.headers['range']) playHeaders['Range'] = req.headers['range']

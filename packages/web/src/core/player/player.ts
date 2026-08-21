@@ -9,10 +9,8 @@
  *   所以下一首在前台就先載進另一個元素，換歌時只對一個「已經播過、已經載好」的
  *   元素呼叫 play()，完全不動 src、不需要網路 —— 這是背景續播唯一穩的做法。
  *
- * 另外支持 HLS (m3u8) — 用於猫耳FM 等返回 HLS 音源的插件。HLS 不做預載：
- * hls.js 綁定在特定元素上，換元素得整個重建，而 HLS 音源本來就不走自動續播那條路。
  */
-import Hls from 'hls.js'
+import { viaProxy } from '../native'
 
 /**
  * 0.05 秒的靜音 WAV（8kHz/8-bit/單聲道，自己產的，不依賴任何外部資源）。
@@ -27,7 +25,6 @@ export class Player {
   private elements: HTMLAudioElement[]
   private currentIndex = 0
   private listeners: Map<string, Array<(...args: any[]) => void>>
-  private hls: Hls | null = null
   /** 已預載到閒置元素上的下一首。url 是原始音源位址，比對用 */
   private preloaded: { url: string; el: HTMLAudioElement } | null = null
   private unlocked = false
@@ -123,10 +120,13 @@ export class Player {
     if (p) p.then(() => el.pause()).catch(() => { /* 解鎖失敗不影響當前播放 */ })
   }
 
-  /** 跨域音源要不要走代理。同源不能再包一層：/api/proxy 會把相對路徑丟給 fetch */
+  /**
+   * 跨域音源要不要走代理。同源不能再包一層（代理只吃絕對 URL），
+   * 原生 App 裡也不包 —— 那邊沒有後端，WebView 直接允許 cleartext。
+   * 判斷邏輯集中在 core/native.ts，兩處行為才不會走鐘。
+   */
   private resolveSrc(url: string): string {
-    const isSameOrigin = url.startsWith('/') || url.startsWith(window.location.origin)
-    return isSameOrigin ? url : `/api/proxy?url=${encodeURIComponent(url)}&method=GET`
+    return viaProxy(url)
   }
 
   /**
@@ -134,7 +134,7 @@ export class Player {
    * 不需要任何網路動作，也不必動 src。
    */
   preload(url: string): void {
-    if (!url || url.includes('.m3u8')) return
+    if (!url) return
     if (this.preloaded?.url === url) return
     const el = this.idleEl
     // 閒置元素不該帶著循環旗標，否則輪替過去之後行為會不一致
@@ -146,7 +146,6 @@ export class Player {
 
   /** 輪替到已預載好的元素並播放。不動 src、不需要網路 */
   private async playPreloaded(el: HTMLAudioElement): Promise<void> {
-    this.destroyHls()
     const prev = this.audio
     this.currentIndex = this.elements.indexOf(el)
     this.preloaded = null
@@ -157,15 +156,7 @@ export class Player {
     await el.play()
   }
 
-  /** 清理 HLS 實例 */
-  private destroyHls(): void {
-    if (this.hls) {
-      this.hls.destroy()
-      this.hls = null
-    }
-  }
-
-  /** 播放指定 URL（支持 HLS m3u8） */
+  /** 播放指定 URL */
   async play(url: string): Promise<void> {
     // 這首正是預載好的那一首 → 走輪替，這是背景續播唯一穩的路徑
     const ready = this.preloaded
@@ -175,60 +166,8 @@ export class Player {
     // 換了別的歌（使用者手動點選、或換子源重試），預載的那份就作廢了
     this.preloaded = null
 
-    // 清理舊的 HLS 實例
-    this.destroyHls()
-
-    // 判斷是否為 HLS (m3u8)
-    const isHls = url.includes('.m3u8')
-
-    if (isHls && Hls.isSupported()) {
-      // HLS 播放：hls.js 需要直接訪問 m3u8 URL
-      // 配置 xhrSetup 將所有 HLS 請求（m3u8 + segments）走後端代理
-      // 注意：xhrSetup 如果 reject，hls.js 會 fallback 到原 URL（不走代理），所以必须成功
-      this.hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        xhrSetup: (xhr, hlsUrl) => {
-          const proxyUrl = `/api/proxy?url=${encodeURIComponent(hlsUrl)}&method=GET`
-          xhr.open('GET', proxyUrl, true)
-          xhr.setRequestHeader('Referer', 'https://www.missevan.com/')
-          xhr.setRequestHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-          // 不要 return Promise — 讓 hls.js 的 xhrSetup promise 成功 resolve，不會 fallback
-        },
-      })
-      this.hls.loadSource(url)
-      this.hls.attachMedia(this.audio)
-
-      return new Promise((resolve, reject) => {
-        this.hls!.on(Hls.Events.MANIFEST_PARSED, () => {
-          console.log('[player] HLS manifest parsed, duration:', this.audio.duration)
-          this.audio.play().then(resolve).catch(reject)
-        })
-        this.hls!.on(Hls.Events.ERROR, (_, data) => {
-          console.warn('[player] HLS error:', data.type, data.details, data.response?.url)
-          if (data.fatal) {
-            console.error('[player] HLS fatal error, destroying and trying fallback')
-            this.destroyHls()
-            reject(new Error(`HLS playback failed: ${data.details}`))
-          }
-        })
-        // 10 秒超時保護
-        setTimeout(() => {
-          if (!this.audio.paused) return
-          console.warn('[player] HLS play timeout')
-          this.destroyHls()
-          reject(new Error('HLS play timeout'))
-        }, 10000)
-      })
-    } else if (isHls && this.audio.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari 原生支持 HLS
-      this.audio.src = url
-      return this.audio.play()
-    } else {
-      // 普通音頻（mp3/aac 等）— 跨域音源走代理繞過 CORS
-      this.audio.src = this.resolveSrc(url)
-      return this.audio.play()
-    }
+    this.audio.src = this.resolveSrc(url)
+    return this.audio.play()
   }
 
   /** 暫停 */

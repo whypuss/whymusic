@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
+import { isNative, viaProxy } from './core/native'
 
 const player = new Player()
 export const pluginManager = new PluginManager()
@@ -156,10 +157,8 @@ const fetchPluginCode = async (url: string, bustCache = false): Promise<string> 
   const target = bustCache
     ? `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`
     : url
-  const isSameOrigin = target.startsWith('/') || target.startsWith(window.location.origin)
-  const request = isSameOrigin
-    ? target
-    : `/api/proxy?url=${encodeURIComponent(target)}&method=GET`
+  // 原生 App 沒有後端可代抓，直接抓第三方插件 URL（WebView 允許跨域）
+  const request = viaProxy(target)
   const response = await fetch(request, { cache: 'no-store' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const code = await response.text()
@@ -402,8 +401,15 @@ export function useMusicApp() {
     initializeState()
   }, [])
 
-  // 取後端的建置戳記。失敗就留 null，UI 顯示「無法取得」而不是假裝一致
+  // 取後端的建置戳記。失敗就留 null，UI 顯示「無法取得」而不是假裝一致。
+  // 原生 App（APK）沒有後端，這件事不是異常 —— 不去打、也不顯示前後端比對，
+  // 否則版本區塊會永遠掛著一個假的「只部署了一半」警示。
   useEffect(() => {
+    if (isNative()) {
+      setServerVersion(null)
+      setSyncAvailable(false)
+      return
+    }
     fetch('/api/version', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
