@@ -60,7 +60,15 @@ if [ ! -f packages/web/dist/index.html ]; then
   fi
   if [ -n "$PNPM" ]; then
     say "  用 $PNPM 建置"
-    $PNPM install --frozen-lockfile && $PNPM build
+    # pnpm 10+ 預設「忽略」相依的 build script（例如根的 esbuild devDep）並以非零
+    # 退出（ERR_PNPM_IGNORED_BUILDS）。那個 esbuild 只給 worker 打包用，自架版的
+    # 前端 build（vite）根本不需要它。兩處要處理：
+    #   1. install 本身：|| true 容錯
+    #   2. pnpm run 前會自動做 deps 狀態檢查，同樣因這個警告非零 —— 用
+    #      --config.verify-deps-before-run=false 關掉那個前置檢查，直接跑 build。
+    # 真正成敗由最後的 dist 檢查判定。
+    $PNPM install --frozen-lockfile || say "  （install 有警告，略過，續建置前端）"
+    $PNPM --config.verify-deps-before-run=false build
   elif command -v npm >/dev/null 2>&1; then
     say "  用 npm 建置（在 packages/web 內，繞過需要 pnpm 的根 script）"
     ( cd packages/web && npm install && npm run build )

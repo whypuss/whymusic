@@ -21,8 +21,11 @@ TimeoutStopSec=15
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-# 配對碼寫在 repo 的 .sync/（見 SYNC_DIR），允許寫工作目錄
+# read-only 而非 true：repo 若 clone 在使用者家目錄（/home/xxx/…）底下，
+# ProtectHome=true 會把 /home 藏成空的，服務 chdir 到 WorkingDirectory 直接
+# 失敗（status=200/CHDIR）。read-only 讓 /home 可見可讀（能 chdir、讀 dist），
+# 下面的 ReadWritePaths 再單獨開放工作目錄可寫（配對碼寫在 repo 的 .sync/）。
+ProtectHome=read-only
 ReadWritePaths=__WORKDIR__
 
 [Install]

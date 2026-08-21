@@ -1,2 +1,9 @@
 packages:
   - 'packages/*'
+
+# 允許這些相依跑安裝時的 build script。pnpm 10+ 預設「忽略」所有相依的 build
+# script 並以非零退出（ERR_PNPM_IGNORED_BUILDS），會讓 deploy/install.sh 的
+# 建置步驟失敗。esbuild 需要 postinstall 裝平台二進制（worker 打包用得到），
+# 明確允許它。（pnpm 10+ 起這個設定放這裡，不再讀 package.json 的 "pnpm" 欄位。）
+onlyBuiltDependencies:
+  - esbuild
