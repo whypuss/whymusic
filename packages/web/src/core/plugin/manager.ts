@@ -233,7 +233,9 @@ export class PluginManager {
   // 吞掉之後 UI 只能說「無法獲取音源」，使用者與開發者都無從判斷。
   async getMediaSource(
     plugin: Plugin, item: MusicItem, quality?: string,
-  ): Promise<{ url: string; headers?: Record<string, string>; source?: string } | null> {
+  ): Promise<{
+    url: string; headers?: Record<string, string>; source?: string; bitrate?: number
+  } | null> {
     if (!plugin.getMediaSource) {
       return item.url ? { url: item.url } : null
     }
@@ -247,6 +249,9 @@ export class PluginManager {
       // 音源可回報它實際用了哪個子源。播不出來時呼叫端要靠這個決定排除誰 ——
       // 不能用 item.subSource，因為後端可能已經跨源救援換過來源了。
       source: result.source,
+      // 實際的位元率。音源可能因為這首歌沒有高音質而降級，所以不等於要求的那檔 ——
+      // 下載清單顯示的必須是真的存下來的音質。
+      bitrate: typeof result.bitrate === 'number' ? result.bitrate : undefined,
     }
   }
 }

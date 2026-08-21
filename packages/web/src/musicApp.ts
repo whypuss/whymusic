@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
 import { isNative, viaProxy } from './core/native'
+import {
+  DownloadedTrack, readDownloads, saveTrack, exportTrack, deleteTrack, downloadKey,
+} from './core/downloads'
 
 const player = new Player()
 export const pluginManager = new PluginManager()
@@ -372,6 +375,15 @@ export function useMusicApp() {
   const [pluginName, setPluginName] = useState('')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [lockedItem, setLockedItem] = useState<{ title: string; artist: string } | null>(null)
+  /** lockedItem 的自動關閉計時器。重複彈出時要換掉舊的，否則前一個會提早關掉新的 */
+  const lockedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * 已下載的曲目（只有 App 版有清單 —— 網頁版存到哪裡是瀏覽器的事，我們管不到）。
+   * 音訊本體在檔案系統，這裡只有 metadata。
+   */
+  const [downloads, setDownloads] = useState<DownloadedTrack[]>(() => readDownloads())
+  /** 正在下載的那一首的 key。一次只下一首：手機頻寬有限，並行只會互相拖慢 */
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend' | 'favorites'>('recommend')
@@ -727,66 +739,117 @@ export function useMusicApp() {
   }, [keyword, searchType, pluginManager])
 
   /**
-   * 下載。與播放同一條路：先問音源要 URL，再把那個 URL 抓成 blob 存檔。
-   * 同樣不含任何平台判斷；跨域 URL 由 /api/proxy 代抓（瀏覽器拿不到跨域 blob）。
+   * 下載。與播放同一條路：先問音源要 URL，再把資料抓下來存檔。
+   * 不含任何平台判斷；存到哪裡、怎麼存由 core/downloads 依宿主決定
+   * （APK 寫進檔案系統並留清單，網頁走瀏覽器另存）。
    */
   const handleDownload = async (item: MusicItem) => {
     const platform = item.platform || ''
     const plugin = pluginManager.getPlugin(platform)
     if (!plugin) {
-      showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
+      showNotification(`找不到音源「${platform || '未知'}」，請到「設置」頁安裝`, 'error')
       return
     }
-    // 失敗重試（502 通常是伺服器重啟空窗或暫時性上游錯誤，重試一次即可）
-    const attempts = [1, 2]
-    for (const attempt of attempts) {
-      try {
-        const media = await pluginManager.getMediaSource(plugin, item, quality)
-        if (!media?.url) throw new Error('音源沒有回傳可下載的 URL')
-        const isSameOrigin = media.url.startsWith('/')
-          || media.url.startsWith(window.location.origin)
-        const url = isSameOrigin
-          ? media.url
-          : `/api/proxy?url=${encodeURIComponent(media.url)}&method=GET`
-        const response = await fetch(url)
-        if (!response.ok) {
-          const err = await response.json().catch(() => null)
-          const msg = err?.error || `HTTP ${response.status}`
-          if (attempt < attempts.length) {
-            await new Promise(r => setTimeout(r, 800))
-            continue
-          }
-          throw new Error(msg)
-        }
-        const contentType = response.headers.get('content-type') || ''
-        const blob = await response.blob()
-        const blobUrl = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = blobUrl
-        const ext = contentType.includes('ogg') ? 'ogg' : contentType.includes('wav') ? 'wav' : 'm4a'
-        const safeName = (item.title || 'song').replace(/[\\/:*?"<>|]/g, '_').trim() || 'song'
-        link.download = `${safeName}.${ext}`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(blobUrl)
-        return
-      } catch (e) {
-        // 最後一次才當作失敗
-        if (attempt >= attempts.length) {
-          console.error('Download failed:', e)
-          const msg = e instanceof Error ? e.message : String(e)
-          // 音源明確表示無權限 → 彈窗提示，不當成一般錯誤
-          if (/Not authorized|1005/i.test(msg) || (e instanceof Error && /Failed to get media/i.test(e.message))) {
-            setLockedItem({ title: item.title || '', artist: item.artist || '' })
-            return
-          }
-          showNotification(`下載失敗: ${msg}`, 'error')
-          return
-        }
-        await new Promise(r => setTimeout(r, 800))
-      }
+    const key = downloadKey(platform, item.id)
+    if (downloadingKey) {
+      showNotification('已有一首在下載，請稍候', 'info')
+      return
     }
+    setDownloadingKey(key)
+    // 失敗重試（502 通常是暫時性上游錯誤，重試一次即可）
+    const attempts = [1, 2]
+    try {
+      for (const attempt of attempts) {
+        try {
+          const media = await pluginManager.getMediaSource(plugin, item, quality)
+          if (!media?.url) throw new Error('音源沒有回傳可下載的 URL')
+          // 原生模式直抓（沒有後端可代抓，WebView 也允許跨域）
+          const response = await fetch(viaProxy(media.url))
+          if (!response.ok) {
+            const msg = `HTTP ${response.status}`
+            if (attempt < attempts.length) {
+              await new Promise(r => setTimeout(r, 800))
+              continue
+            }
+            throw new Error(msg)
+          }
+          const contentType = response.headers.get('content-type') || ''
+          const data = await response.arrayBuffer()
+          const saved = await saveTrack({
+            key,
+            title: item.title || '未知曲目',
+            artist: item.artist || '',
+            // 記錄音源實際給的音質，不是使用者要求的 —— 沒有高音質版本時會降級
+            bitrate: media.bitrate,
+            data,
+            contentType,
+          })
+          if (saved) {
+            setDownloads(readDownloads())
+            showNotification(
+              `已下載：${saved.title}${saved.bitrate ? ` · ${saved.bitrate} kbps` : ''}`,
+              'success',
+            )
+          } else {
+            showNotification('已開始下載', 'success')
+          }
+          return
+        } catch (e) {
+          if (attempt >= attempts.length) throw e
+          await new Promise(r => setTimeout(r, 800))
+        }
+      }
+    } catch (e) {
+      console.error('Download failed:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      if (/Not authorized|1005/i.test(msg) || /Failed to get media/i.test(msg)) {
+        showLocked(item)
+        return
+      }
+      showNotification(`下載失敗: ${msg}`, 'error')
+    } finally {
+      setDownloadingKey(null)
+    }
+  }
+
+  /**
+   * 「這首沒有可用音源」的提示。3 秒自動關 —— 使用者不必為了一首放不出來的歌
+   * 多按一下，而且這個提示只是說明，不需要任何決定。
+   *
+   * 它刻意只在**使用者主動點**某首歌時出現。自動續播遇到無源曲目是直接跳下一首
+   * （見 play() 的 auto 分支），不彈任何東西 —— 續播中途蹦出視窗才是真的擾人。
+   * 彈窗本身也不會影響音訊：它只是覆蓋層，正在播的歌繼續播。
+   */
+  /** 把已下載的檔案交給系統分享面板，使用者自己決定存去哪 */
+  const exportDownload = async (track: DownloadedTrack) => {
+    try {
+      await exportTrack(track)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      // 使用者自己取消分享面板不是錯誤，不要報成失敗
+      if (/cancel/i.test(msg)) return
+      showNotification(`匯出失敗: ${msg}`, 'error')
+    }
+  }
+
+  /** 刪掉下載的檔案與清單裡那一筆 */
+  const removeDownload = async (track: DownloadedTrack) => {
+    try {
+      await deleteTrack(track)
+      setDownloads(readDownloads())
+      showNotification(`已刪除：${track.title}`, 'success')
+    } catch (e) {
+      showNotification(`刪除失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
+  }
+
+  const showLocked = (item: { title?: string; artist?: string }) => {
+    if (lockedTimerRef.current) clearTimeout(lockedTimerRef.current)
+    setLockedItem({ title: item.title || '', artist: item.artist || '' })
+    lockedTimerRef.current = setTimeout(() => {
+      setLockedItem(null)
+      lockedTimerRef.current = null
+    }, 3000)
   }
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info') => {
@@ -938,8 +1001,8 @@ export function useMusicApp() {
         return
       }
 
-      // 使用者自己點的那首放不出來 → 明確告知，不要默默跳走
-      setLockedItem({ title: item.title || '', artist: item.artist || '' })
+      // 使用者自己點的那首放不出來 → 明確告知（3 秒自動關），不要默默跳走
+      showLocked(item)
     }
   }
 
@@ -1555,6 +1618,7 @@ export function useMusicApp() {
     applySyncCode,
     createSyncCode,
     favorites,
+    exportDownload,
     exportFavorites,
     importFavorites,
     importBusy,
@@ -1574,6 +1638,8 @@ export function useMusicApp() {
     currentTime,
     currentView,
     cyclePlayMode,
+    downloads,
+    downloadingKey,
     duration,
     errorMessage,
     formatTime,
@@ -1611,6 +1677,7 @@ export function useMusicApp() {
     recommendSongs,
     recommendUnsupported,
     reloadingPlugin,
+    removeDownload,
     removePlugin,
     results,
     savePluginCode,

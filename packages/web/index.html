@@ -2,6 +2,17 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      不要快取這個入口檔。
+      JS/CSS 的檔名帶內容雜湊（換版必換名），本來就不會拿到舊的；但 index.html
+      的檔名固定，一旦被快取住，它引用的就永遠是舊那組雜湊檔名 —— 換版等於沒換。
+
+      這在 APK 上是實際踩到的故障：更新 APK 之後 WebView 仍從快取讀 index.html，
+      畫面還是舊版前端（靠「設置」頁的建置戳記才發現：APK 是新的、畫面是舊的）。
+      網頁版由伺服器送 Cache-Control 處理，APK 沒有伺服器，只能靠這個 meta。
+    -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
     <!-- 512x512 是 Chrome for Android 媒體通知的目標尺寸：曲目沒有封面時，

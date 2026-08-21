@@ -8,6 +8,7 @@
  */
 import { useMemo, useRef, useState } from 'react'
 import { MusicItem } from './../core'
+import { formatSize } from './../core/downloads'
 import {
   MusicApp,
   pluginManager,
@@ -44,7 +45,7 @@ function Segmented<T extends string>({
 
 /** 歌曲／專輯列。用微妙的分隔線而非卡片邊框，接近 iOS 的 list */
 function Row({
-  item, active, onClick, onDownload, favorite, onToggleFavorite,
+  item, active, onClick, onDownload, favorite, onToggleFavorite, downloading,
 }: {
   item: MusicItem
   active: boolean
@@ -53,6 +54,8 @@ function Row({
   // 專輯／歌單這類容器沒有收藏的意義，那時不傳這兩個，心心就不出現
   favorite?: boolean
   onToggleFavorite?: () => void
+  /** 這首正在下載。無損檔有 30MB＋，沒有回饋使用者不知道到底有沒有在動 */
+  downloading?: boolean
 }) {
   return (
     <div
@@ -103,13 +106,27 @@ function Row({
       )}
       <button
         onClick={e => { e.stopPropagation(); onDownload() }}
-        title="下載"
-        className="w-8 h-8 rounded-full flex items-center justify-center text-white/35 hover:text-[#0A84FF] hover:bg-white/10 transition flex-shrink-0"
+        disabled={downloading}
+        title={downloading ? '下載中…' : '下載'}
+        aria-label={downloading ? '下載中' : '下載'}
+        className={`w-8 h-8 rounded-full flex items-center justify-center transition flex-shrink-0
+                    ${downloading
+                      ? 'text-[#0A84FF]'
+                      : 'text-white/35 hover:text-[#0A84FF] hover:bg-white/10'}`}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M8 2v8m0 0L5 7m3 3l3-3M3 13h10" stroke="currentColor" strokeWidth="1.6"
-            strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {downloading ? (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="animate-spin">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6"
+              strokeOpacity="0.25" />
+            <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="1.6"
+              strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2v8m0 0L5 7m3 3l3-3M3 13h10" stroke="currentColor" strokeWidth="1.6"
+              strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </button>
     </div>
   )
@@ -221,7 +238,8 @@ function ProgressBar({
 export default function AppleUI({ app }: { app: MusicApp }) {
   const {
     albumDetail, albumLoading, albumTracks, applySyncCode, createSyncCode,
-    currentTime, currentView, cyclePlayMode, duration, exportFavorites, favorites,
+    currentTime, currentView, cyclePlayMode, downloads, downloadingKey, duration,
+    exportDownload, exportFavorites, favorites,
     formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit,
     hasMore, importBusy, importFavorites, importProgress, importText, installPluginFromURL,
     isFavorite, isPlaying, keyword, loadMore, loading,
@@ -229,7 +247,8 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
     recommendLoading, recommendSongs, recommendUnsupported, removePlugin,
     results, search,
-    quality, refreshRecommend, searchType, seekTo, serverVersion, setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
+    quality, refreshRecommend, removeDownload, searchType, seekTo, serverVersion,
+    setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
     syncAvailable, syncBusy,
     syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
@@ -284,19 +303,29 @@ export default function AppleUI({ app }: { app: MusicApp }) {
       )}
 
       {/* 無音源曲目提示 */}
+      {/*
+        「這首沒有音源」的提示。刻意**不是**全螢幕遮罩對話框：它只是說明、不需要
+        任何決定，3 秒就自己關（見 musicApp 的 showLocked）。原本的遮罩會在那 3 秒
+        內擋住整個畫面，連想換下一首都點不到 —— 那才是真的影響使用。
+        現在是浮動卡片，底下照樣可以操作、正在播的歌也不受影響。
+      */}
       {lockedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm"
-          onClick={() => setLockedItem(null)}>
-          <div className="bg-[#1C1C1E] rounded-[18px] p-6 max-w-sm w-full text-center border border-white/10"
-            onClick={e => e.stopPropagation()}>
-            <div className="text-[17px] font-semibold mb-1.5">此曲目無可用音源</div>
-            <div className="text-[14px] text-white/55 mb-5 leading-relaxed">
-              「{lockedItem.title}」在目前所有子音源都取不到播放位址，換一首試試。
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 w-[min(92vw,22rem)]
+                        pointer-events-none">
+          <div className="pointer-events-auto bg-[#1C1C1E]/95 backdrop-blur-xl rounded-[14px]
+                          px-4 py-3 border border-white/10 shadow-2xl flex items-start gap-3"
+            onClick={() => setLockedItem(null)}>
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
+              className="text-[#FF9F0A] flex-shrink-0 mt-0.5">
+              <path d="M8 5.5v3.2M8 11h.01M8 1.8 1.6 13.2h12.8L8 1.8z" stroke="currentColor"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div className="min-w-0">
+              <div className="text-[14px] font-medium">此曲目無可用音源</div>
+              <div className="text-[13px] text-white/50 mt-0.5 leading-snug">
+                「{lockedItem.title}」在所有子音源都取不到播放位址，換一首試試。
+              </div>
             </div>
-            <button onClick={() => setLockedItem(null)}
-              className="w-full py-2.5 rounded-[12px] bg-[#0A84FF] text-[15px] font-medium active:opacity-70">
-              好
-            </button>
           </div>
         </div>
       )}
@@ -356,6 +385,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     active={playingItem?.id === item.id}
                     onClick={() => handleItemClick(item)}
                     onDownload={() => handleDownload(item)}
+                    downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     favorite={isFavorite(item)}
                     onToggleFavorite={() => toggleFavorite(item)}
                   />
@@ -384,6 +414,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     active={playingItem?.id === item.id}
                     onClick={() => handleItemClick(item)}
                     onDownload={() => handleDownload(item)}
+                    downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     favorite
                     onToggleFavorite={() => toggleFavorite(item)}
                   />
@@ -438,6 +469,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     active={playingItem?.id === item.id}
                     onClick={() => handleItemClick(item)}
                     onDownload={() => handleDownload(item)}
+                    downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     // 專輯／歌單是容器，收藏它沒有意義（收藏頁要能直接播）
                     favorite={item.type === 'music' ? isFavorite(item) : undefined}
                     onToggleFavorite={item.type === 'music' ? () => toggleFavorite(item) : undefined}
@@ -497,6 +529,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                       { list: albumTracks, index: idx, order: 'sequential' },
                     )}
                     onDownload={() => handleDownload(track)}
+                    downloading={downloadingKey === `${track.platform || ''}::${track.id}`}
                     favorite={isFavorite(track)}
                     onToggleFavorite={() => toggleFavorite(track)}
                   />
@@ -635,6 +668,61 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 匯入也吃任何純文字清單（「歌名 - 歌手」一行一首），那才是別人給
                 你一串歌時真正用得到的路徑。
               */}
+              {/*
+                已下載。只有 App 版有這一區 —— 網頁版的下載交給瀏覽器另存，
+                存到哪裡我們無從得知，也就沒有清單可管（見 core/downloads.ts）。
+                每首顯示的是**實際**存下來的音質：音源沒有高音質版本時會降級，
+                寫「你選的那檔」會是騙人的。
+              */}
+              {downloads.length > 0 && (
+                <div className="mt-6">
+                  <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                    已下載 · {downloads.length} 首
+                  </div>
+                  <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
+                    {downloads.map(d => (
+                      <div key={d.key} className="p-4 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-[15px] truncate">{d.title}</div>
+                          <div className="text-[13px] text-white/45 truncate mt-0.5">
+                            {d.artist || '未知歌手'}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            {d.bitrate && (
+                              <span className="px-1.5 py-0.5 rounded-md bg-[#0A84FF]/20 text-[#0A84FF]
+                                               text-[11px] font-medium tabular-nums">
+                                {d.bitrate} kbps
+                              </span>
+                            )}
+                            <span className="text-[11px] text-white/30 tabular-nums">
+                              {formatSize(d.size)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button onClick={() => exportDownload(d)}
+                            title="匯出" aria-label="匯出"
+                            className="px-3.5 py-1.5 rounded-full bg-white/15 text-[13px] font-medium
+                                       active:opacity-70 transition">
+                            匯出
+                          </button>
+                          <button onClick={() => removeDownload(d)}
+                            title="刪除" aria-label="刪除"
+                            className="px-3.5 py-1.5 rounded-full bg-[#FF453A]/20 text-[#FF453A]
+                                       text-[13px] font-medium active:opacity-70 transition">
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
+                    檔案存在 App 的儲存空間。「匯出」會開啟系統分享面板，可以存到
+                    檔案、雲端硬碟或傳給別人。
+                  </div>
+                </div>
+              )}
+
               <div className="mt-6">
                 <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
                   歌單
