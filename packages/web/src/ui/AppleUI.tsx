@@ -6,7 +6,7 @@
  * 以留白和層次取代邊框。深色底以 iOS 的近黑（#000 / #1C1C1E）為基調，
  * 不用漸層 —— 平面風的重點是乾淨，不是華麗。
  */
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { MusicItem } from './../core'
 import {
   MusicApp,
@@ -16,6 +16,7 @@ import {
   PLAY_MODE_ICON,
   PLAY_MODE_LABEL,
   RECOMMEND_CATEGORIES,
+  QUALITIES,
 } from './../musicApp'
 
 /** iOS 風格的分段控制 */
@@ -118,24 +119,122 @@ function EmptyState({ text }: { text: string }) {
   return <div className="px-6 py-16 text-center text-[15px] text-white/35">{text}</div>
 }
 
+/**
+ * 進度條：可點擊也可拖曳。
+ *
+ * 用 pointer events 而不是 mouse/touch 兩套：pointerdown/move/up 同時涵蓋滑鼠與
+ * 觸控，一份邏輯就好。關鍵是 setPointerCapture —— 沒有它，手指或游標一旦滑出
+ * 這個細長的條子，後續事件就跑到別的元素上，拖曳會在中途斷掉。
+ *
+ * 拖曳期間**不即時 seek**，只更新畫面上的預覽位置，放開才真的跳。理由是每次 seek
+ * 都會讓 audio 重新緩衝，邊拖邊 seek 在手機上會卡成一格一格，而且拖過的每個位置
+ * 都可能觸發一次網路請求。
+ *
+ * 拖曳中也不能讓外部的 currentTime 蓋掉手指位置（timeupdate 每秒都在發），
+ * 所以有 dragRatio 時一律以它為準。
+ */
+function ProgressBar({
+  currentTime, duration, onSeek, formatTime,
+}: {
+  currentTime: number
+  duration: number
+  onSeek: (seconds: number) => void
+  formatTime: (s: number) => string
+}) {
+  const barRef = useRef<HTMLDivElement>(null)
+  const [dragRatio, setDragRatio] = useState<number | null>(null)
+  const seekable = duration > 0 && Number.isFinite(duration)
+
+  const ratioFromEvent = (clientX: number): number | null => {
+    const rect = barRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0) return null
+    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+  }
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!seekable) return
+    const r = ratioFromEvent(e.clientX)
+    if (r === null) return
+    // 抓住指針：滑出條子外面也繼續收到事件，拖曳才不會中途斷掉
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setDragRatio(r)
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRatio === null) return
+    const r = ratioFromEvent(e.clientX)
+    if (r !== null) setDragRatio(r)
+  }
+
+  const finish = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRatio === null) return
+    const r = ratioFromEvent(e.clientX) ?? dragRatio
+    setDragRatio(null)
+    if (seekable) onSeek(r * duration)
+  }
+
+  // 拖曳中以手指位置為準，否則跟著播放進度
+  const ratio = dragRatio !== null
+    ? dragRatio
+    : (seekable ? Math.min(1, Math.max(0, currentTime / duration)) : 0)
+  const percent = ratio * 100
+  const dragging = dragRatio !== null
+
+  return (
+    <div
+      ref={barRef}
+      // py-3 把可觸範圍撐到約 30px 高 —— 3px 的線在手機上根本按不準
+      className={`mt-2.5 py-3 group ${seekable ? 'cursor-pointer touch-none' : 'cursor-default'}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      title={seekable ? '點擊或拖曳跳轉' : ''}
+      role="slider"
+      aria-label="播放進度"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration) || 0}
+      aria-valuenow={Math.round(ratio * (duration || 0))}
+    >
+      <div className="relative h-[3px] bg-white/15 rounded-full">
+        {/* 拖曳中關掉 transition，否則把手會延遲追在手指後面 */}
+        <div className={`absolute inset-y-0 left-0 bg-white rounded-full ${dragging ? '' : 'transition-all'}`}
+          style={{ width: `${percent}%` }} />
+        <div className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 rounded-full bg-white shadow
+                         ${dragging
+                           ? 'w-4 h-4 opacity-100'
+                           : 'w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity'}`}
+          style={{ left: `${percent}%` }} />
+        {/* 拖曳中把目標時間浮在把手上方，不然使用者不知道會跳到哪 */}
+        {dragging && (
+          <div className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded-md bg-[#1C1C1E]
+                          border border-white/15 text-[11px] tabular-nums whitespace-nowrap"
+            style={{ left: `${percent}%` }}>
+            {formatTime(ratio * duration)}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AppleUI({ app }: { app: MusicApp }) {
   const {
     albumDetail, albumLoading, albumTracks, applySyncCode, createSyncCode,
     currentTime, currentView, cyclePlayMode, duration, exportFavorites, favorites,
-    formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit, handleSeek,
+    formatTime, goBackToSearch, handleDownload, handleItemClick, handleSearchSubmit,
     hasMore, importBusy, importFavorites, importProgress, importText, installPluginFromURL,
     isFavorite, isPlaying, keyword, loadMore, loading,
     loadingMore, lockedItem, notification, play, playMode, playNext, playPrev, playingItem,
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
     recommendLoading, recommendSongs, recommendUnsupported, removePlugin,
     results, search,
-    searchType, serverVersion, setCurrentView, setKeyword, setLockedItem, setPluginName, setPluginUrl,
+    quality, refreshRecommend, searchType, seekTo, serverVersion, setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
     syncAvailable, syncBusy,
     syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
   } = app
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   const tabs = [
     { key: 'recommend' as const, label: '推薦' },
     { key: 'search' as const, label: '搜尋' },
@@ -210,11 +309,30 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           {currentView === 'recommend' && (
             <>
               <div className="px-4 pt-8 pb-4">
-                <h1 className="text-[34px] font-bold tracking-tight leading-tight">推薦</h1>
-                {/* 副標說明目前分類的榜單來源，換分類時跟著換 */}
-                <p className="text-[15px] text-white/45 mt-0.5">
-                  {RECOMMEND_CATEGORIES.find(c => c.value === recommendCategory)?.caption}
-                </p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h1 className="text-[34px] font-bold tracking-tight leading-tight">推薦</h1>
+                    {/* 副標說明目前分類的榜單來源，換分類時跟著換 */}
+                    <p className="text-[15px] text-white/45 mt-0.5">
+                      {RECOMMEND_CATEGORIES.find(c => c.value === recommendCategory)?.caption}
+                    </p>
+                  </div>
+                  {/*
+                    重新整理。有了快取之後這個按鈕才有存在必要 —— 清單可能是幾小時前
+                    存下來的，使用者想看最新的得有辦法強制重抓。
+                  */}
+                  <button onClick={refreshRecommend} disabled={recommendLoading}
+                    title="重新整理" aria-label="重新整理"
+                    className="mt-2 w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0
+                               text-white/45 hover:text-white hover:bg-white/10 active:opacity-60
+                               disabled:opacity-30 transition">
+                    <svg width="17" height="17" viewBox="0 0 16 16" fill="none"
+                      className={recommendLoading ? 'animate-spin' : ''}>
+                      <path d="M14 8a6 6 0 1 1-1.76-4.24M14 2v4h-4" stroke="currentColor"
+                        strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
                 {/* 一排五個標籤，一個分類一份榜單。沒有第二個軸 */}
                 <div className="mt-4">
                   <Segmented
@@ -391,7 +509,41 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           {currentView === 'plugins' && (
             <div className="px-4 pt-8 pb-4">
               <h1 className="text-[34px] font-bold tracking-tight leading-tight">設置</h1>
-              <p className="text-[15px] text-white/45 mt-0.5">音源、歌單與同步</p>
+              <p className="text-[15px] text-white/45 mt-0.5">音質、音源、歌單與同步</p>
+
+              {/*
+                音質。播放與下載共用同一個設定 —— 選了「最高」，下載也是最高。
+                實際位元率由音源決定（WhyMusic 對應 128/320/999 kbps），所以這裡
+                只寫「約」；換成別的音源時階梯可能完全不同。
+              */}
+              <div className="mt-6">
+                <div className="text-[13px] font-medium text-white/45 uppercase tracking-wide px-1 mb-2">
+                  音質
+                </div>
+                <div className="rounded-[14px] bg-white/[0.07] overflow-hidden divide-y divide-white/[0.06]">
+                  {QUALITIES.map(q => (
+                    <button key={q.value} onClick={() => setQuality(q.value)}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-3
+                                 active:bg-white/10 md:hover:bg-white/[0.06] transition-colors text-left">
+                      <div className="min-w-0">
+                        <div className="text-[15px]">{q.label}</div>
+                        <div className="text-[13px] text-white/40 mt-0.5">{q.hint}</div>
+                      </div>
+                      {/* 打勾標示目前選的，不用 radio —— iOS 的清單慣例是勾 */}
+                      {quality === q.value && (
+                        <svg width="18" height="18" viewBox="0 0 16 16" fill="none"
+                          className="text-[#0A84FF] flex-shrink-0">
+                          <path d="M3 8.5l3.5 3.5L13 5" stroke="currentColor" strokeWidth="1.8"
+                            strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[12px] text-white/30 mt-2 px-1 leading-relaxed">
+                  下載也用這個音質。音源不一定每首都有最高音質，取不到時會退到可用的。
+                </div>
+              </div>
 
               {pluginError && (
                 <div className="mt-5 p-3.5 rounded-[12px] bg-[#FF453A]/15 border border-[#FF453A]/30">
@@ -639,16 +791,12 @@ export default function AppleUI({ app }: { app: MusicApp }) {
             </div>
           </div>
 
-          {/* 進度條：可點擊跳轉 */}
-          <div className="mt-2.5 py-2 cursor-pointer group" onClick={handleSeek} title="點擊跳轉">
-            <div className="relative h-[3px] bg-white/15 rounded-full">
-              <div className="absolute inset-y-0 left-0 bg-white rounded-full transition-all"
-                style={{ width: `${progress}%` }} />
-              <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full
-                              bg-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{ left: `${progress}%` }} />
-            </div>
-          </div>
+          <ProgressBar
+            currentTime={currentTime}
+            duration={duration}
+            onSeek={seekTo}
+            formatTime={formatTime}
+          />
 
           {/*
             播放鍵用絕對定位置中（left-1/2 + -translate-x-1/2），而非靠 flex/grid

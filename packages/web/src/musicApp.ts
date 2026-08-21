@@ -43,6 +43,20 @@ const STORAGE_PLUGINS = 'musicfree-plugins'
 const STORAGE_PLAY_MODE = 'musicfree-play-mode'
 const STORAGE_FAVORITES = 'musicfree-favorites'
 const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
+const STORAGE_QUALITY = 'musicfree-quality'
+
+/**
+ * 音質。字串原樣交給音源插件詮釋 —— WhyMusic 對應 128 / 320 / 999 kbps，
+ * 但播放器本身不假設任何音源的音質階梯（換音源時階梯可能完全不同）。
+ * 播放與下載共用同一個設定：使用者選了「最高」，下載也該是最高。
+ */
+export type Quality = 'low' | 'standard' | 'super'
+export const QUALITIES: { value: Quality; label: string; hint: string }[] = [
+  { value: 'low', label: '流量優先', hint: '約 128 kbps' },
+  { value: 'standard', label: '標準', hint: '約 320 kbps' },
+  { value: 'super', label: '最高', hint: '音源可提供的最佳品質' },
+]
+const DEFAULT_QUALITY: Quality = 'standard'
 
 /**
  * 一個分類要幾首。粵語會把「最新」與「熱門」兩種順序交錯塞進同一份清單，
@@ -127,6 +141,51 @@ function pickNextIndex(queue: PlayQueue, skip: Set<number>): number {
 
 let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
+
+/**
+ * 推薦清單的快取。榜單一天才變一次（叱咤是一週），而取一次很貴 —— APK 沒有後端，
+ * 粵語那份是裝置直抓 2.4MB。所以存起來，開 app 與切分類都先用快取。
+ *
+ * TTL 六小時：比榜單更新頻率短，又足以覆蓋一整天的零散使用。過期不是丟掉，
+ * 而是「先顯示、背景換新」（見 loadRecommend）—— 舊歌單也遠比空白畫面有用。
+ *
+ * 一個分類 80 首約 24KB，五個分類共約 120KB，在 localStorage 的容量裡微不足道。
+ */
+const STORAGE_RECOMMEND_CACHE = 'musicfree-recommend-cache'
+const RECOMMEND_TTL = 6 * 60 * 60 * 1000
+
+type RecommendCacheEntry = { at: number; songs: MusicItem[] }
+
+const readRecommendCache = (
+  category: RecommendCategory,
+): { songs: MusicItem[]; fresh: boolean } | null => {
+  try {
+    const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_CACHE) || '{}')
+    const hit: RecommendCacheEntry | undefined = all[category]
+    if (!hit || !Array.isArray(hit.songs) || hit.songs.length === 0) return null
+    return { songs: hit.songs, fresh: Date.now() - hit.at < RECOMMEND_TTL }
+  } catch {
+    return null
+  }
+}
+
+/** 清掉整份推薦快取。換音源時必須做 —— 快取內容是「某個音源給的」 */
+const clearRecommendCache = () => {
+  try {
+    localStorage.removeItem(STORAGE_RECOMMEND_CACHE)
+  } catch { /* 清不掉也無妨，TTL 到了自然會換 */ }
+}
+
+const writeRecommendCache = (category: RecommendCategory, songs: MusicItem[]) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_CACHE) || '{}')
+    all[category] = { at: Date.now(), songs }
+    localStorage.setItem(STORAGE_RECOMMEND_CACHE, JSON.stringify(all))
+  } catch (e) {
+    // 配額滿或關閉了儲存：快取只是加速，寫不進去不該影響功能
+    console.warn('[recommend] 快取寫入失敗:', e)
+  }
+}
 
 /** 讀 localStorage 快取的插件（含使用者自行安裝的第三方插件） */
 const readCachedPlugins = (): { name: string; code: string; enabled: boolean }[] => {
@@ -339,6 +398,29 @@ export function useMusicApp() {
   const [hasMore, setHasMore] = useState(true)
   // 推薦頁：分類（粵語／中文／Kpop／歐美）× 排序（最新／熱門）。
   // 分類記在 localStorage：常聽粵語的人不該每次開 app 都要再點一次
+  // 宣告在音質設定之前：setQuality 換音質時要作廢已預取的位址（詳見下方註解）
+  const prefetchRef = useRef<{ key: string; url: string; source?: string; index: number } | null>(null)
+
+  /** 音質偏好。播放與下載共用，記在 localStorage */
+  const [quality, setQualityState] = useState<Quality>(() => {
+    const saved = localStorage.getItem(STORAGE_QUALITY) as Quality | null
+    return QUALITIES.some(q => q.value === saved) ? (saved as Quality) : DEFAULT_QUALITY
+  })
+  /**
+   * 音質也放進 ref：play() 會被 ended 事件的處理函式呼叫，那個函式只註冊一次，
+   * 直接讀 state 會鎖住第一次渲染的值 —— 換了音質之後自動續播還是用舊的。
+   */
+  const qualityRef = useRef<Quality>(quality)
+  qualityRef.current = quality
+
+  const setQuality = (q: Quality) => {
+    setQualityState(q)
+    localStorage.setItem(STORAGE_QUALITY, q)
+    // 已預取的下一首是舊音質解出來的位址，作廢它，否則換了音質下一首還是舊的
+    prefetchRef.current = null
+    showNotification(`音質：${QUALITIES.find(x => x.value === q)?.label || q}`, 'info')
+  }
+
   const [recommendCategory, setRecommendCategory] = useState<RecommendCategory>(() => {
     const saved = localStorage.getItem(STORAGE_RECOMMEND_CAT) as RecommendCategory | null
     return RECOMMEND_CATEGORIES.some(c => c.value === saved)
@@ -379,7 +461,6 @@ export function useMusicApp() {
    * 一次會挑到另一首歌，於是預取的位址與預載進閒置元素的音訊全部作廢（實測推薦頁
    * 幾乎每次都不命中）。而預載是 iOS 鎖屏換歌唯一穩的路徑，不命中就等於沒修。
    */
-  const prefetchRef = useRef<{ key: string; url: string; source?: string; index: number } | null>(null)
   /**
    * 實際播放過的曲目堆疊（不含當前這首）。
    * 「上一首」不能用 index-1 —— 隨機模式下清單索引與播放順序無關，
@@ -646,7 +727,7 @@ export function useMusicApp() {
     const attempts = [1, 2]
     for (const attempt of attempts) {
       try {
-        const media = await pluginManager.getMediaSource(plugin, item)
+        const media = await pluginManager.getMediaSource(plugin, item, quality)
         if (!media?.url) throw new Error('音源沒有回傳可下載的 URL')
         const isSameOrigin = media.url.startsWith('/')
           || media.url.startsWith(window.location.origin)
@@ -719,7 +800,7 @@ export function useMusicApp() {
     try {
       const plugin = pluginManager.getPlugin(next.platform || '')
       if (!plugin) return
-      const media = await pluginManager.getMediaSource(plugin, next)
+      const media = await pluginManager.getMediaSource(plugin, next, qualityRef.current)
       if (media?.url) {
         prefetchRef.current = { key, url: media.url, source: media.source, index: nextIdx }
         // 光是拿到 URL 還不夠 —— 還要把它載進播放器閒置的那個 audio 元素。
@@ -791,6 +872,7 @@ export function useMusicApp() {
         : await pluginManager.getMediaSource(
             plugin,
             exclude.length > 0 ? { ...item, _exclude: exclude } : item,
+            qualityRef.current,
           )
       prefetchRef.current = null
       if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
@@ -880,12 +962,14 @@ export function useMusicApp() {
   }
 
   /** 點進度條跳轉（音源端點支援 Range，可直接 seek） */
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!duration || !Number.isFinite(duration)) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    if (rect.width <= 0) return
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
-    const target = ratio * duration
+  /**
+   * 跳到指定秒數。UI 只負責算出「使用者要跳到哪」，命中率與座標換算是它的事 ——
+   * 這裡不碰 DOM 事件，拖曳、點擊、以後接鎖屏的 seek 動作都能共用同一個入口。
+   * 立刻同步 currentTime 是為了讓畫面不等 timeupdate 就跟上。
+   */
+  const seekTo = (seconds: number) => {
+    if (!Number.isFinite(seconds)) return
+    const target = Math.max(0, duration > 0 ? Math.min(seconds, duration) : seconds)
     player.seekTo(target)
     setCurrentTime(target)
   }
@@ -896,21 +980,42 @@ export function useMusicApp() {
     await search(nextPage, true)
   }
 
-  // 載入推薦：一個分類一份榜單。推薦是音源的能力，逐一問已啟用的插件要，
-  // 沒裝音源就沒有推薦 —— 這樣才與「播放器不認識來源」一致。
-  const loadRecommend = useCallback(async (category: RecommendCategory) => {
+  /**
+   * 載入推薦。一個分類一份榜單，推薦是音源的能力（逐一問已啟用的插件要），
+   * 沒裝音源就沒有推薦 —— 這樣才與「播放器不認識來源」一致。
+   *
+   * 策略是 stale-while-revalidate：有快取就**立刻**顯示、完全不轉圈，同時在背景
+   * 抓新的；沒快取才真的等。為什麼值得：榜單本身一天才變一次，而取一次的代價很高
+   * （APK 沒有後端，粵語那份叱咤榜要由裝置直抓 2.4MB，手機網路上是好幾秒），
+   * 之前每次開 app、每次切分類都在付這筆。現在切分類是瞬間的。
+   */
+  const loadRecommend = useCallback(async (
+    category: RecommendCategory,
+    opts: { force?: boolean } = {},
+  ) => {
     setRecommendCategory(category)
     localStorage.setItem(STORAGE_RECOMMEND_CAT, category)
-    setRecommendLoading(true)
     setRecommendUnsupported(false)
-    // 先清空：切分類時若留著舊清單，載入中會看到上一個分類的歌，
-    // 點下去播的也是那一首
-    setRecommendSongs([])
+
+    const cached = opts.force ? null : readRecommendCache(category)
+    if (cached) {
+      // 先給畫面。不轉圈 —— 使用者要的是「馬上看到歌」
+      setRecommendSongs(cached.songs)
+      setRecommendLoading(false)
+      if (cached.fresh) return
+      // 過期了：畫面留著舊的，背景靜靜換新（失敗就繼續用舊的，總比空白好）
+    } else {
+      // 沒快取才清空並轉圈。切分類時若留著上一個分類的歌，
+      // 使用者會看到錯的清單，點下去播的也是那一首
+      setRecommendSongs([])
+      setRecommendLoading(true)
+    }
+
     try {
       await waitForPlugins()
       const enabled = pluginManager.getEnabledPlugins()
       if (enabled.length === 0) {
-        setRecommendUnsupported(true)
+        if (!cached) setRecommendUnsupported(true)
         return
       }
       let songs: MusicItem[] = []
@@ -925,22 +1030,34 @@ export function useMusicApp() {
           console.error(`[recommend] ${plugin.name} 失敗:`, e)
         }
       }
-      setRecommendSongs(songs)
-      setRecommendUnsupported(!supported)
+      // 抓到東西才覆蓋畫面與快取。空結果不要蓋掉手上可用的舊清單
+      if (songs.length > 0) {
+        setRecommendSongs(songs)
+        writeRecommendCache(category, songs)
+      } else if (!cached) {
+        setRecommendSongs(songs)
+      }
+      if (!cached || songs.length > 0) setRecommendUnsupported(!supported)
     } catch (e) {
       console.error('Load recommend failed:', e)
-      setRecommendSongs([])
-      showNotification(`載入推薦失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      // 有舊清單就留著，只在完全沒東西可顯示時才報錯給使用者
+      if (!cached) {
+        setRecommendSongs([])
+        showNotification(`載入推薦失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      }
     } finally {
       setRecommendLoading(false)
     }
   }, [])
 
-  // 切換分類。同一個分類已有結果就不重打
+  // 切換分類。同一個分類已顯示著結果就不重打
   const switchRecommendCategory = (category: RecommendCategory) => {
     if (category === recommendCategory && recommendSongs.length > 0) return
     loadRecommend(category)
   }
+
+  /** 手動重新整理推薦：略過快取，強制抓最新 */
+  const refreshRecommend = () => loadRecommend(recommendCategory, { force: true })
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
   /**
@@ -1278,8 +1395,10 @@ export function useMusicApp() {
       setPluginError(null)
       // 帶上版本，使用者才看得出到底有沒有真的換版（先前只說「成功」，
       // 抓回舊碼時完全看不出來）
-      // 清掉舊清單，回推薦頁時會用新音源重新載入
+      // 清掉舊清單與快取，回推薦頁時會用新音源重新載入 —— 快取裡那份是舊音源
+      // 給的資料，留著會讓人以為換版沒生效
       setRecommendSongs([])
+      clearRecommendCache()
       const version = pluginManager.getPlugin(registered)?.version || '?'
       showNotification(`已安裝 ${registered} v${version}`, 'success')
     } catch (e: any) {
@@ -1302,8 +1421,9 @@ export function useMusicApp() {
     // 已安裝狀態（按鈕仍是「更新／已啟用／移除」、版號變成 v?），要重載才正確
     setPluginKey(k => k + 1)
     setPluginError(null)
-    // 音源沒了，已載入的推薦清單也不再可播，清掉讓它重新判定
+    // 音源沒了，已載入的推薦清單也不再可播，連快取一起清掉讓它重新判定
     setRecommendSongs([])
+    clearRecommendCache()
     setResults([])
     showNotification(`插件「${name}」已移除`, 'success')
     savePluginsToStorage()
@@ -1447,7 +1567,6 @@ export function useMusicApp() {
     handleDownload,
     handleItemClick,
     handleSearchSubmit,
-    handleSeek,
     hasMore,
     installOfficialPlugin,
     installPluginFromURL,
@@ -1465,6 +1584,7 @@ export function useMusicApp() {
     playNext,
     playPrev,
     playMode,
+    quality,
     playingItem,
     pluginError,
     pluginKey,
@@ -1472,6 +1592,7 @@ export function useMusicApp() {
     pluginToggles,
     pluginUrl,
     recommendCategory,
+    refreshRecommend,
     recommendLoading,
     recommendSongs,
     recommendUnsupported,
@@ -1483,6 +1604,7 @@ export function useMusicApp() {
     search,
     searchPage,
     searchType,
+    seekTo,
     serverVersion,
     setAlbumDetail,
     setAlbumLoading,
@@ -1499,6 +1621,7 @@ export function useMusicApp() {
     setLockedItem,
     setNotification,
     setPlayMode,
+    setQuality,
     setPlayingItem,
     setPluginError,
     setPluginKey,

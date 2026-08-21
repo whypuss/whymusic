@@ -231,11 +231,15 @@ export class PluginManager {
    */
   // 錯誤往外丟（不再 catch 成 null）：播放失敗的原因只有插件知道，
   // 吞掉之後 UI 只能說「無法獲取音源」，使用者與開發者都無從判斷。
-  async getMediaSource(plugin: Plugin, item: MusicItem): Promise<{ url: string; headers?: Record<string, string>; source?: string } | null> {
+  async getMediaSource(
+    plugin: Plugin, item: MusicItem, quality?: string,
+  ): Promise<{ url: string; headers?: Record<string, string>; source?: string } | null> {
     if (!plugin.getMediaSource) {
       return item.url ? { url: item.url } : null
     }
-    const result: any = await plugin.getMediaSource(item) ?? { url: item.url }
+    // quality 原樣交給插件詮釋（WhyMusic 對應 128/320/999 kbps）。
+    // 不在這裡翻譯成位元率 —— 那是音源的事，播放器不該假設任何音源的音質階梯。
+    const result: any = await plugin.getMediaSource(item, quality) ?? { url: item.url }
     if (!result.url) return null
     return {
       url: result.url,
