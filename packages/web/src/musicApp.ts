@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
 import { isNative, viaProxy } from './core/native'
 import {
-  DownloadedTrack, readDownloads, saveTrack, exportTrack, deleteTrack, downloadKey,
+  DownloadedTrack, readDownloads, saveTrack, exportTrack, exportTextFile, deleteTrack, downloadKey,
 } from './core/downloads'
 
 const player = new Player()
@@ -1150,7 +1150,7 @@ export function useMusicApp() {
    * 算繪時看不到，但本站匯入時能直接還原（含 id 與子音源），不必逐首重新搜尋。
    * 兩者並存 = 給人看的通用格式 + 給程式看的精確還原，不必二選一。
    */
-  const exportFavorites = () => {
+  const exportFavorites = async () => {
     if (favorites.length === 0) {
       showNotification('還沒有收藏可以匯出', 'error')
       return
@@ -1176,15 +1176,15 @@ export function useMusicApp() {
       '-->',
       '',
     ]
-    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `whymusic-收藏-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}.md`
-    a.click()
-    // 不立刻 revoke：Safari 有時還沒開始讀就被撤掉，下載會變成空檔
-    setTimeout(() => URL.revokeObjectURL(url), 10000)
-    showNotification(`已匯出 ${favorites.length} 首`, 'success')
+    try {
+      await exportTextFile(
+        `whymusic-收藏-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}.md`,
+        lines.join('\n'),
+      )
+      showNotification(`已匯出 ${favorites.length} 首`, 'success')
+    } catch (e: any) {
+      showNotification(`匯出失敗：${e?.message || e}`, 'error')
+    }
   }
 
   /** 歸一化歌名用於比對：去括號註記、去標點空白、轉小寫 */

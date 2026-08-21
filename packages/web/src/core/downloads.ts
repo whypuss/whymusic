@@ -13,7 +13,7 @@
  * 寫公用 Music/Documents 需要額外權限，而分享面板不需要任何權限，還能讓使用者
  * 自己決定丟去哪（檔案、雲端硬碟、傳給別人），對使用者也更好懂。
  */
-import { Filesystem, Directory } from '@capacitor/filesystem'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { isNative } from './native'
 
@@ -150,6 +150,47 @@ export async function exportTrack(track: DownloadedTrack): Promise<void> {
     url: uri,
     dialogTitle: '匯出到…',
   })
+}
+
+/**
+ * 匯出一個文字檔（例如收藏的 .md）。與音訊下載同一個分歧：
+ *
+ *   網頁版：blob + <a download> 另存。內容前面加 BOM —— 瀏覽器自己不需要，
+ *     但 Windows 記事本、WPS 這類軟體開檔案時沒看到 BOM 就用系統編碼猜，
+ *     中文直接變亂碼；有 BOM 就一定認出 UTF-8。匯入端的 trim() 會把它吃掉，
+ *     不影響回讀。
+ *
+ *   APK：WebView 的 <a download> 點了等於沒事（沒有下載列）。寫進快取目錄
+ *     再開系統分享面板，使用者自己決定存到「檔案」、雲端還是傳給別人。
+ */
+export async function exportTextFile(fileName: string, text: string): Promise<void> {
+  const content = '\ufeff' + text
+
+  if (!isNative()) {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // 不立刻 revoke：Safari 有時還沒開始讀就被撤掉，下載會變成空檔
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+    return
+  }
+
+  await Filesystem.writeFile({
+    path: fileName, directory: Directory.Cache, data: content, encoding: Encoding.UTF8,
+  })
+  const { uri } = await Filesystem.getUri({ path: fileName, directory: Directory.Cache })
+  try {
+    await Share.share({ title: fileName, url: uri, dialogTitle: '匯出到…' })
+  } catch (e: any) {
+    // 使用者關掉分享面板不是錯誤，不要對它彈失敗訊息
+    if (/cancel/i.test(String(e?.message || e))) return
+    throw e
+  }
 }
 
 /** 刪掉檔案與清單裡那一筆 */
