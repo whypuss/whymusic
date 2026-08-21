@@ -12,6 +12,7 @@ import { createHmac } from 'node:crypto'
 import { execSync } from 'node:child_process'
 import { gzip as gzipCb } from 'node:zlib'
 import { promisify } from 'node:util'
+import { lookup as dnsLookup } from 'node:dns/promises'
 import {
   SYNC_CODE_LEN,
   SYNC_MAX_BYTES,
@@ -20,6 +21,8 @@ import {
   normalizeSyncCode,
   validateSyncPayload,
 } from '../shared/sync.js'
+import { checkProxyTarget, isPrivateIp, parseAllowedHosts } from '../shared/proxy-guard.js'
+import { RateLimiter } from '../shared/rate-limit.js'
 
 /**
  * 建置戳記，供 /api/version 回報，前端顯示在「音源」頁。
@@ -44,10 +47,70 @@ const SERVER_VERSION = process.env.BUILD_STAMP || (() => {
 })()
 
 const PORT = Number(process.env.PORT) || 8788
+// 監聽位址。預設 0.0.0.0（直接對外）。有反向代理時應設 HOST=127.0.0.1，
+// 讓 node 只收本機來的連線，外界一律經 nginx —— 否則有人繞過反代直接命中
+// node 的埠，反代上設的限流、標頭、TLS 全部被跳過。
+const HOST = process.env.HOST || '0.0.0.0'
 const STATIC_DIR = path.resolve(import.meta.dirname, '../dist')
 // 音源插件目錄（repo 根層 plugins/）。由本服務直接供應，執行時不碰 GitHub。
 const PLUGINS_DIR = process.env.PLUGINS_DIR
   || path.resolve(import.meta.dirname, '../../../plugins')
+
+// /api/proxy 的網域白名單。預設空＝不限制（允許任何公網 host）—— 因為這個 app
+// 刻意支援貼任意第三方插件 URL 與從任意 CDN 播放。想鎖死的營運者可設
+// PROXY_ALLOWED_HOSTS=gdstudio.xyz,music.126.net,... 逗號分隔。私有網段一律擋，
+// 不受白名單影響（見 assertProxyTargetSafe）。
+const PROXY_ALLOWED_HOSTS = parseAllowedHosts(process.env.PROXY_ALLOWED_HOSTS)
+
+// /api/proxy 的每 IP 限流。proxy 會實際去外部抓資料，不節流容易被單一來源灌爆、
+// 或因短時間打太多次被上游封 IP。預設容量 60、每秒回補 5 ≈ 平常每秒 5 次、可突發 60。
+// 可用環境變數調整；設 PROXY_RATE_CAPACITY=0 完全關閉（不建議公開時關）。
+const PROXY_RATE_CAPACITY = Number(process.env.PROXY_RATE_CAPACITY ?? 60)
+const proxyLimiter = PROXY_RATE_CAPACITY > 0
+  ? new RateLimiter({
+      capacity: PROXY_RATE_CAPACITY,
+      refillPerSec: Number(process.env.PROXY_RATE_REFILL ?? 5),
+    })
+  : null
+
+/**
+ * 取請求的來源 IP。有反向代理時真實 IP 在 X-Forwarded-For 的第一個。
+ * TRUST_PROXY=1 才信任該標頭 —— 沒有反代卻信任它，任何人都能偽造 XFF 繞過限流。
+ */
+function clientIp(req) {
+  if (process.env.TRUST_PROXY === '1') {
+    const xff = req.headers['x-forwarded-for']
+    if (xff) return String(xff).split(',')[0].trim()
+  }
+  return req.socket?.remoteAddress || 'unknown'
+}
+
+/**
+ * 代抓目標的完整安全檢查。同步部分（scheme／字面 IP／白名單）交給共用模組，
+ * Node 這裡額外做 DNS 解析後複查：把網域解析成實際 IP，逐一確認都不是私有網段。
+ * 這一步擋掉「攻擊者把自己的網域解析到 127.0.0.1 / 169.254.169.254」這類繞過 ——
+ * 字面 IP 檢查看不到網域背後解析到哪裡，只有真的解析一次才知道。
+ *
+ * 回傳 { ok, url } 或 { ok:false, reason }。
+ */
+async function assertProxyTargetSafe(rawUrl) {
+  const basic = checkProxyTarget(rawUrl, PROXY_ALLOWED_HOSTS)
+  if (!basic.ok) return basic
+  const host = basic.url.hostname.replace(/^\[|\]$/g, '')
+  // host 是 IP 字面的話 checkProxyTarget 已驗過，不必再解析
+  if (/^[\d.]+$/.test(host) || host.includes(':')) return basic
+  try {
+    const results = await dnsLookup(host, { all: true })
+    for (const { address } of results) {
+      if (isPrivateIp(address)) {
+        return { ok: false, reason: `${host} 解析到私有位址 ${address}` }
+      }
+    }
+  } catch (e) {
+    return { ok: false, reason: `無法解析 host：${e.message}` }
+  }
+  return basic
+}
 
 /**
  * 裝置配對碼的暫存目錄。CF 版用 KV，自架版沒有 KV，但有檔案系統 —— 一組碼一個
@@ -1463,6 +1526,19 @@ const server = http.createServer(async (req, res) => {
         jsonResponse(res, { error: 'Missing url parameter' }, 400)
         return
       }
+      // 限流：proxy 會實際去外部抓資料，不節流容易被灌爆或害上游封本機 IP
+      if (proxyLimiter && !proxyLimiter.take(clientIp(req))) {
+        jsonResponse(res, { error: '請求過於頻繁，請稍後再試' }, 429)
+        return
+      }
+      // SSRF 防護：擋 file:// 之類的協定、私有／保留網段、以及網域解析後指向內網的
+      // 繞過。不做這關的話，這個端點等於一個開放代理，任何人都能拿去打雲 metadata。
+      const safe = await assertProxyTargetSafe(decodeURIComponent(targetUrl))
+      if (!safe.ok) {
+        console.warn(`[proxy] 拒絕 ${targetUrl}：${safe.reason}`)
+        jsonResponse(res, { error: `拒絕代抓：${safe.reason}` }, 403)
+        return
+      }
       // Collect request body
       let body = null
       if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -1481,7 +1557,9 @@ const server = http.createServer(async (req, res) => {
       const ref = req.headers['referer'] || req.headers['referrer']
       if (ref) proxyHeaders['Referer'] = ref
 
-      const proxyReq = await fetch(decodeURIComponent(targetUrl), {
+      // 用剛剛驗證過的那個 URL 物件，不要再 decode 一次 —— 避免「檢查的是 A、
+      // 實際抓的是 B」這種 TOCTOU 落差
+      const proxyReq = await fetch(safe.url, {
         method,
         headers: proxyHeaders,
         body: body || undefined,
@@ -1566,6 +1644,9 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, () => {
-  console.log(`🎧 MusicWeb server listening on http://0.0.0.0:${PORT}`)
+server.listen(PORT, HOST, () => {
+  console.log(`🎧 MusicWeb server listening on http://${HOST}:${PORT}`)
+  if (HOST === '0.0.0.0') {
+    console.log('   （對外監聽全部介面。有反向代理時建議設 HOST=127.0.0.1）')
+  }
 })

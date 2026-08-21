@@ -30,11 +30,22 @@ import {
   normalizeSyncCode,
   validateSyncPayload,
 } from '../shared/sync.js'
+import { checkProxyTarget } from '../shared/proxy-guard.js'
+
+// /api/proxy 網域白名單。Workers 沒有 process.env，設定寫成模組常數（與 why.js
+// 那些設定同一種做法）。空＝不限制。要鎖死就在這裡列出允許的網域。
+const PROXY_ALLOWED_HOSTS = []
 
 /** 跨域代抓。音源 URL 與第三方插件都靠它，必須保留 Range 以便 seek */
 async function handleProxy(request, url) {
   const targetUrl = url.searchParams.get('url')
   if (!targetUrl) return jsonResponse({ error: 'Missing url parameter' }, 400)
+
+  // SSRF 防護：擋非 http(s) 協定與字面私有 IP。Workers 沒有 dns 模組做解析後複查，
+  // 但 CF 邊緣本來就到不了私有網段（沒有內網可打），字面檢查對它已足夠。
+  // 白名單預設空＝不限制；要鎖死可設 PROXY_ALLOWED_HOSTS。
+  const safe = checkProxyTarget(decodeURIComponent(targetUrl), PROXY_ALLOWED_HOSTS)
+  if (!safe.ok) return jsonResponse({ error: `拒絕代抓：${safe.reason}` }, 403)
 
   const proxyHeaders = new Headers()
   for (const h of ['content-type', 'accept', 'authorization', 'range', 'referer']) {
@@ -47,8 +58,8 @@ async function handleProxy(request, url) {
   )
 
   const method = url.searchParams.get('method') || request.method
-  const response = await fetch(decodeURIComponent(targetUrl), {
-    method: method === 'GET' || method === 'HEAD' ? method : method,
+  const response = await fetch(safe.url, {
+    method,
     headers: proxyHeaders,
     body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
   })
