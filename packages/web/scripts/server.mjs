@@ -1,7 +1,10 @@
 /**
- * MusicWeb production server for 192.168.31.55
- * Handles static files + all API endpoints (search/media/proxy)
- * Usage: node scripts/server.mjs
+ * WhyMusic 自架後端 —— 單一 Node 程序，供應前端靜態檔與所有 /api/* 端點。
+ * 零外部相依（只用 Node 內建模組），所以在 VPS／LXC／裸機 Linux 上不必編譯
+ * 任何東西，有 Node ≥ 20.11 就能跑。
+ *
+ * 用法：node packages/web/scripts/server.mjs
+ * 設定全部走環境變數，見 .env.example 與 DEPLOY.md。
  */
 
 import http from 'node:http'
@@ -23,6 +26,18 @@ import {
 } from '../shared/sync.js'
 import { checkProxyTarget, isPrivateIp, parseAllowedHosts } from '../shared/proxy-guard.js'
 import { RateLimiter } from '../shared/rate-limit.js'
+
+// import.meta.dirname 需要 Node 20.11+。版本不符時給明確訊息就退出，不要讓它到
+// 後面才以看不懂的方式壞掉（例如 STATIC_DIR 變成 undefined、靜態檔全 404）。
+{
+  const [major, minor] = process.versions.node.split('.').map(Number)
+  if (major < 20 || (major === 20 && minor < 11)) {
+    console.error(
+      `✘ 需要 Node.js ≥ 20.11，目前是 ${process.versions.node}。請升級 Node 後再啟動。`,
+    )
+    process.exit(1)
+  }
+}
 
 /**
  * 建置戳記，供 /api/version 回報，前端顯示在「音源」頁。
@@ -1038,6 +1053,10 @@ async function serveStatic(res, filePath, extraHeaders) {
   return true
 }
 
+// 關閉中旗標。收到終止訊號後 /healthz 改回 503，讓負載平衡器/監控在排空期間
+// 就把這台標記為不健康、停止導流進來。宣告在此以便 request handler 讀得到。
+let shuttingDown = false
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const pathname = url.pathname
@@ -1046,6 +1065,19 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, corsHeaders())
     res.end()
+    return
+  }
+
+  // 健康檢查：給 systemd/OpenRC/監控判活。刻意放在所有邏輯之前、不碰外部相依，
+  // 純粹回「這個程序還在收請求」。回 503 若正在關閉中（見下方 shutdown）。
+  if (pathname === '/healthz') {
+    if (shuttingDown) {
+      res.writeHead(503, { 'Content-Type': 'text/plain' })
+      res.end('shutting down')
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/plain' })
+      res.end('ok')
+    }
     return
   }
 
@@ -1649,4 +1681,47 @@ server.listen(PORT, HOST, () => {
   if (HOST === '0.0.0.0') {
     console.log('   （對外監聽全部介面。有反向代理時建議設 HOST=127.0.0.1）')
   }
+})
+
+// ── 進程健壯性 ────────────────────────────────────────────────────
+// 這是單一長駐程序，沒有 worker 池、崩了就整站掛掉等 systemd/OpenRC 重啟。
+// 所以兩件事很重要：關閉時要排空、不要因為一個沒 catch 的錯就猝死。
+
+/**
+ * 優雅關閉：停止收新連線、給進行中的請求一點時間跑完，再退出。
+ * 服務重啟／部署時，硬砍會把播到一半的串流連線直接斷掉；先 close 再退出，
+ * 已建立的下載/串流能收尾。逾時仍未空就強制退出，不無限等。
+ */
+function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`\n[server] 收到 ${signal}，開始優雅關閉…`)
+  const force = setTimeout(() => {
+    console.error('[server] 排空逾時，強制退出')
+    process.exit(1)
+  }, 10000)
+  force.unref()
+  server.close((err) => {
+    clearTimeout(force)
+    if (err) {
+      console.error('[server] 關閉時出錯:', err)
+      process.exit(1)
+    }
+    console.log('[server] 已排空，退出')
+    process.exit(0)
+  })
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
+// 沒被 catch 的錯記錄下來但不讓程序猝死。一個音源解析或某條 API 路徑的邊角
+// 例外不該把整站拖垮 —— 個別請求已經有 try/catch 回 500，這裡是最後一道網，
+// 接住漏掉的那些（例如非同步回呼裡拋的）。
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] unhandledRejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[server] uncaughtException:', err)
+  // 刻意不退出：這台機器所有使用者共用這一個程序，為了一個邊角例外整站重啟
+  // 不划算。真正致命的錯（記憶體、埠佔用）Node 自己還是會退。
 })
