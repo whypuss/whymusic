@@ -25,7 +25,7 @@ function Segmented<T extends string>({
   options, value, onChange,
 }: { options: { value: T; label: string }[]; value: T; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex p-0.5 bg-white/10 rounded-[10px]">
+    <div className="inline-flex p-0.5 bg-white/10 rounded-[10px] whitespace-nowrap">
       {options.map(o => (
         <button
           key={o.value}
@@ -376,8 +376,12 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     </svg>
                   </button>
                 </div>
-                {/* 一排五個標籤，一個分類一份榜單。沒有第二個軸 */}
-                <div className="mt-4">
+                {/*
+                  一排五個標籤，一個分類一份榜單。沒有第二個軸。
+                  overflow-x-auto 是保險：標籤文字依語言長短不一（各語言已用縮寫），
+                  萬一仍放不下，只在這一列內部滾動，絕不把整頁撐寬。
+                */}
+                <div className="mt-4 overflow-x-auto">
                   <Segmented
                     value={recommendCategory}
                     onChange={c => switchRecommendCategory(c)}
