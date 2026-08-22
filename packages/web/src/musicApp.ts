@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Player, PluginManager, MusicItem, SearchType } from './core'
 import { isNative, viaProxy } from './core/native'
+import { t } from './core/i18n'
 import { syncNativeMedia, stopNativeMedia, onNativeControl } from './core/background'
 import {
   DownloadedTrack, readDownloads, saveTrack, exportTrack, exportTextFile, deleteTrack, downloadKey,
@@ -248,10 +249,10 @@ const fetchPluginCode = async (url: string, bustCache = false): Promise<string> 
   const response = await fetch(request, { cache: 'no-store' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const code = await response.text()
-  if (!code.trim()) throw new Error('回應為空')
+  if (!code.trim()) throw new Error(t('回應為空'))
   // 代理把上游錯誤也當內容回傳，這裡確認真的是插件碼而不是錯誤頁
   if (!code.includes('module.exports') && !code.includes('exports.')) {
-    throw new Error('回應不是插件代碼（可能是上游錯誤頁）')
+    throw new Error(t('回應不是插件代碼（可能是上游錯誤頁）'))
   }
   return code
 }
@@ -322,7 +323,7 @@ function applyMediaMetadata(item: MusicItem | null): void {
     return
   }
   ms.metadata = new MediaMetadata({
-    title: item.title || '未知曲目',
+    title: item.title || t('未知曲目'),
     artist: item.artist || '未知歌手',
     album: item.album || 'WhyMusic',
     // Chrome for Android 媒體通知的目標尺寸是 512x512。搜尋結果只帶 picId、
@@ -417,7 +418,7 @@ export function useMusicApp() {
     localStorage.setItem(STORAGE_QUALITY, q)
     // 已預取的下一首是舊音質解出來的位址，作廢它，否則換了音質下一首還是舊的
     prefetchRef.current = null
-    showNotification(`音質：${QUALITIES.find(x => x.value === q)?.label || q}`, 'info')
+    showNotification(t('音質：{label}', { label: QUALITIES.find(x => x.value === q)?.label || q }), 'info')
   }
 
   const [recommendCategory, setRecommendCategory] = useState<RecommendCategory>(() => {
@@ -680,7 +681,7 @@ export function useMusicApp() {
   const cyclePlayMode = () => {
     setPlayMode(prev => {
       const next = PLAY_MODE_ORDER[(PLAY_MODE_ORDER.indexOf(prev) + 1) % PLAY_MODE_ORDER.length]
-      showNotification(PLAY_MODE_LABEL[next], 'info')
+      showNotification(t(PLAY_MODE_LABEL[next]), 'info')
       return next
     })
   }
@@ -701,7 +702,7 @@ export function useMusicApp() {
     if (!ready) {
       setLoading(false)
       setLoadingMore(false)
-      setErrorMessage('插件尚未載入，請稍後再試。')
+      setErrorMessage(t('插件尚未載入，請稍後再試。'))
       return
     }
     
@@ -734,10 +735,10 @@ export function useMusicApp() {
       }
       
       if (pageNum === 1 && newResults.length === 0) {
-        setErrorMessage(`沒有找到關鍵字「${keyword}」的搜尋結果。`)
+        setErrorMessage(t('沒有找到關鍵字「{keyword}」的搜尋結果。', { keyword }))
       }
     } catch (e: any) {
-      const msg = `搜尋失敗: ${e.message || String(e)}`
+      const msg = t('搜尋失敗: {msg}', { msg: e.message || String(e) })
       console.error('Search error:', e)
       setErrorMessage(msg)
       showNotification(msg, 'error')
@@ -756,12 +757,12 @@ export function useMusicApp() {
     const platform = item.platform || ''
     const plugin = pluginManager.getPlugin(platform)
     if (!plugin) {
-      showNotification(`找不到音源「${platform || '未知'}」，請到「設置」頁安裝`, 'error')
+      showNotification(t('找不到音源「{platform}」，請到「設置」頁安裝', { platform: platform || '?' }), 'error')
       return
     }
     const key = downloadKey(platform, item.id)
     if (downloadingKey) {
-      showNotification('已有一首在下載，請稍候', 'info')
+      showNotification(t('已有一首在下載，請稍候'), 'info')
       return
     }
     setDownloadingKey(key)
@@ -771,7 +772,7 @@ export function useMusicApp() {
       for (const attempt of attempts) {
         try {
           const media = await pluginManager.getMediaSource(plugin, item, quality)
-          if (!media?.url) throw new Error('音源沒有回傳可下載的 URL')
+          if (!media?.url) throw new Error(t('音源沒有回傳可下載的 URL'))
           // 原生模式直抓（沒有後端可代抓，WebView 也允許跨域）
           const response = await fetch(viaProxy(media.url))
           if (!response.ok) {
@@ -786,7 +787,7 @@ export function useMusicApp() {
           const data = await response.arrayBuffer()
           const saved = await saveTrack({
             key,
-            title: item.title || '未知曲目',
+            title: item.title || t('未知曲目'),
             artist: item.artist || '',
             // 記錄音源實際給的音質，不是使用者要求的 —— 沒有高音質版本時會降級
             bitrate: media.bitrate,
@@ -796,11 +797,11 @@ export function useMusicApp() {
           if (saved) {
             setDownloads(readDownloads())
             showNotification(
-              `已下載：${saved.title}${saved.bitrate ? ` · ${saved.bitrate} kbps` : ''}`,
+              t('已下載：{title}', { title: saved.title }) + (saved.bitrate ? ` · ${saved.bitrate} kbps` : ''),
               'success',
             )
           } else {
-            showNotification('已開始下載', 'success')
+            showNotification(t('已開始下載'), 'success')
           }
           return
         } catch (e) {
@@ -815,7 +816,7 @@ export function useMusicApp() {
         showLocked(item)
         return
       }
-      showNotification(`下載失敗: ${msg}`, 'error')
+      showNotification(t('下載失敗: {msg}', { msg }), 'error')
     } finally {
       setDownloadingKey(null)
     }
@@ -837,7 +838,7 @@ export function useMusicApp() {
       const msg = e instanceof Error ? e.message : String(e)
       // 使用者自己取消分享面板不是錯誤，不要報成失敗
       if (/cancel/i.test(msg)) return
-      showNotification(`匯出失敗: ${msg}`, 'error')
+      showNotification(t('匯出失敗：{msg}', { msg }), 'error')
     }
   }
 
@@ -846,9 +847,9 @@ export function useMusicApp() {
     try {
       await deleteTrack(track)
       setDownloads(readDownloads())
-      showNotification(`已刪除：${track.title}`, 'success')
+      showNotification(t('已刪除：{title}', { title: track.title }), 'success')
     } catch (e) {
-      showNotification(`刪除失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showNotification(t('刪除失敗: {msg}', { msg: e instanceof Error ? e.message : String(e) }), 'error')
     }
   }
 
@@ -945,7 +946,7 @@ export function useMusicApp() {
       const platform = item.platform || ''
       const plugin = pluginManager.getPlugin(platform)
       if (!plugin) {
-        showNotification(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`, 'error')
+        showNotification(t('找不到音源「{platform}」，請到「設置」頁安裝', { platform: platform || '?' }), 'error')
         return
       }
       // 若這首正是先前預取過的，直接用那個 URL，省掉一次網路往返。
@@ -961,7 +962,7 @@ export function useMusicApp() {
             qualityRef.current,
           )
       prefetchRef.current = null
-      if (!media?.url) throw new Error('音源沒有回傳可播放的 URL')
+      if (!media?.url) throw new Error(t('音源沒有回傳可播放的 URL'))
       usedSource = media.source || item.subSource
 
       // 播放前就把 metadata 設好 —— Android 是在取得 audio focus 的那一刻讀它，
@@ -1002,8 +1003,8 @@ export function useMusicApp() {
         // 跳不動了才收手，並說清楚為什麼停下來
         showNotification(
           skip.size > MAX_AUTO_SKIP
-            ? `連續 ${skip.size} 首無可用音源，已停止續播`
-            : '清單裡沒有其他可播的曲目了',
+            ? t('連續 {n} 首無可用音源，已停止續播', { n: skip.size })
+            : t('清單裡沒有其他可播的曲目了'),
           'error',
         )
         setIsPlaying(false)
@@ -1144,7 +1145,7 @@ export function useMusicApp() {
       // 有舊清單就留著，只在完全沒東西可顯示時才報錯給使用者
       if (!cached) {
         setRecommendSongs([])
-        showNotification(`載入推薦失敗: ${e instanceof Error ? e.message : String(e)}`, 'error')
+        showNotification(t('載入推薦失敗: {msg}', { msg: e instanceof Error ? e.message : String(e) }), 'error')
       }
     } finally {
       setRecommendLoading(false)
@@ -1185,7 +1186,7 @@ export function useMusicApp() {
       } catch (e) {
         console.error('[favorites] 寫入失敗:', e)
       }
-      showNotification(exists ? '已取消收藏' : `已收藏「${item.title}」`, 'info')
+      showNotification(exists ? t('已取消收藏') : t('已收藏「{title}」', { title: item.title }), 'info')
       return next
     })
   }
@@ -1200,19 +1201,19 @@ export function useMusicApp() {
    */
   const exportFavorites = async () => {
     if (favorites.length === 0) {
-      showNotification('還沒有收藏可以匯出', 'error')
+      showNotification(t('還沒有收藏可以匯出'), 'error')
       return
     }
-    const t = new Date()
-    const p = (n: number) => String(n).padStart(2, '0')
-    const when = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const when = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
     const lines = [
-      '# WhyMusic 收藏',
+      `# WhyMusic ${t('收藏')}`,
       '',
-      `匯出時間：${when}`,
-      `共 ${favorites.length} 首`,
+      t('匯出時間：{when}', { when }),
+      t('共 {n} 首', { n: favorites.length }),
       '',
-      ...favorites.map((f, i) => `${i + 1}. ${f.title || '未知曲目'} — ${f.artist || '未知歌手'}`),
+      ...favorites.map((f, i) => `${i + 1}. ${f.title || t('未知曲目')} — ${f.artist || t('未知歌手')}`),
       '',
       '<!-- whymusic:favorites:v1',
       // 欄位縮成單字母：這段是給程式看的，沒必要佔滿檔案
@@ -1226,12 +1227,12 @@ export function useMusicApp() {
     ]
     try {
       await exportTextFile(
-        `whymusic-收藏-${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}.md`,
+        `whymusic-${t('收藏')}-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.md`,
         lines.join('\n'),
       )
-      showNotification(`已匯出 ${favorites.length} 首`, 'success')
+      showNotification(t('已匯出 {n} 首', { n: favorites.length }), 'success')
     } catch (e: any) {
-      showNotification(`匯出失敗：${e?.message || e}`, 'error')
+      showNotification(t('匯出失敗：{msg}', { msg: e?.message || e }), 'error')
     }
   }
 
@@ -1256,7 +1257,7 @@ export function useMusicApp() {
   const importFavorites = async (text: string) => {
     const raw = String(text || '').trim()
     if (!raw) {
-      showNotification('請先貼上歌單內容或選擇檔案', 'error')
+      showNotification(t('請先貼上歌單內容或選擇檔案'), 'error')
       return
     }
 
@@ -1295,7 +1296,7 @@ export function useMusicApp() {
         }))
         const added = addAll(items)
         showNotification(
-          added > 0 ? `已匯入 ${added} 首（檔案內含完整資料）` : '這些曲目都已經在收藏裡',
+          added > 0 ? t('已匯入 {n} 首（檔案內含完整資料）', { n: added }) : t('這些曲目都已經在收藏裡'),
           'success',
         )
         return
@@ -1307,7 +1308,7 @@ export function useMusicApp() {
     // ── 路徑 2：純文字清單 ──
     const plugin = pluginManager.getEnabledPlugins()[0]
     if (!plugin) {
-      showNotification('純文字歌單需要音源才能比對，請先安裝音源', 'error')
+      showNotification(t('純文字歌單需要音源才能比對，請先安裝音源'), 'error')
       return
     }
     const sourceName = plugin.name
@@ -1329,7 +1330,7 @@ export function useMusicApp() {
       if (entries.length >= 200) break                   // 上限，別讓人貼一整本書進來
     }
     if (entries.length === 0) {
-      showNotification('看不出這份內容裡有歌曲', 'error')
+      showNotification(t('看不出這份內容裡有歌曲'), 'error')
       return
     }
 
@@ -1365,9 +1366,9 @@ export function useMusicApp() {
       const added = addAll(found)
       // 明確講出找不到的那幾首。只說「匯入了 8 首」的話，使用者不知道少了什麼
       const tail = missing.length > 0
-        ? `，${missing.length} 首找不到：${missing.slice(0, 3).join('、')}${missing.length > 3 ? '…' : ''}`
+        ? t('，{n} 首找不到：{names}', { n: missing.length, names: missing.slice(0, 3).join('、') + (missing.length > 3 ? '…' : '') })
         : ''
-      showNotification(`已匯入 ${added} 首${tail}`, missing.length > 0 ? 'info' : 'success')
+      showNotification(t('已匯入 {n} 首', { n: added }) + tail, missing.length > 0 ? 'info' : 'success')
     } finally {
       setImportBusy(false)
       setImportProgress('')
@@ -1412,18 +1413,18 @@ export function useMusicApp() {
       const platform = item.platform || ''
       const plugin = pluginManager.getPlugin(platform)
       if (!plugin) {
-        setErrorMessage(`找不到音源「${platform || '未知'}」，請到「插件」頁安裝`)
+        setErrorMessage(t('找不到音源「{platform}」，請到「設置」頁安裝', { platform: platform || '?' }))
         return
       }
       const tracks = await pluginManager.getAlbumInfoForPlugin(plugin.name, item)
       if (tracks === null) {
-        setErrorMessage(`音源「${plugin.name}」不支援專輯詳情`)
+        setErrorMessage(t('音源「{name}」不支援專輯詳情', { name: plugin.name }))
         return
       }
       setAlbumTracks(tracks)
     } catch (e) {
       console.error('Load album tracks failed:', e)
-      setErrorMessage(`載入專輯失敗: ${e instanceof Error ? e.message : String(e)}`)
+      setErrorMessage(t('載入專輯失敗: {msg}', { msg: e instanceof Error ? e.message : String(e) }))
     } finally {
       setAlbumLoading(false)
     }
@@ -1452,7 +1453,7 @@ export function useMusicApp() {
   const installPluginFromURL = async () => {
     const url = pluginUrl.trim()
     if (!url) {
-      showNotification('請輸入插件 URL', 'error')
+      showNotification(t('請輸入音源網址'), 'error')
       return
     }
     try {
@@ -1465,14 +1466,14 @@ export function useMusicApp() {
       savePluginCode(registered, code)
       setPluginToggles(prev => ({ ...prev, [registered]: true }))
       setPluginKey(k => k + 1)
-      showNotification(`插件「${registered}」已安裝`, 'success')
+      showNotification(t('插件「{name}」已安裝', { name: registered }), 'success')
       setPluginUrl('')
       setPluginName('')
       savePluginsToStorage()
     } catch (e: any) {
       // 原本只說「插件安裝失敗」，看不出是網路不通、URL 錯還是代碼有問題
       console.error('Install error:', e)
-      showNotification(`插件安裝失敗：${e?.message || e}`, 'error')
+      showNotification(t('插件安裝失敗：{msg}', { msg: e?.message || e }), 'error')
     } finally {
       setLoading(false)
     }
@@ -1494,7 +1495,7 @@ export function useMusicApp() {
     setRecommendSongs([])
     clearRecommendCache()
     setResults([])
-    showNotification(`插件「${name}」已移除`, 'success')
+    showNotification(t('插件「{name}」已移除', { name }), 'success')
     savePluginsToStorage()
   }
 
@@ -1539,7 +1540,7 @@ export function useMusicApp() {
   const createSyncCode = async () => {
     const plugins = readCachedPlugins()
     if (plugins.length === 0) {
-      showNotification('目前沒有已安裝的音源', 'error')
+      showNotification(t('目前沒有已安裝的音源'), 'error')
       return
     }
     try {
@@ -1553,9 +1554,9 @@ export function useMusicApp() {
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       setSyncCode(data.code)
-      showNotification('同步碼已產生，24 小時內有效', 'success')
+      showNotification(t('同步碼已產生，24 小時內有效'), 'success')
     } catch (e: any) {
-      showNotification(`產生同步碼失敗：${e?.message || e}`, 'error')
+      showNotification(t('產生同步碼失敗：{msg}', { msg: e?.message || e }), 'error')
     } finally {
       setSyncBusy(false)
     }
@@ -1565,7 +1566,7 @@ export function useMusicApp() {
   const applySyncCode = async () => {
     const code = syncInput.trim()
     if (!code) {
-      showNotification('請輸入同步碼', 'error')
+      showNotification(t('請輸入同步碼'), 'error')
       return
     }
     try {
@@ -1574,7 +1575,7 @@ export function useMusicApp() {
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       const plugins: { name: string; code: string; enabled?: boolean }[] = data?.plugins || []
-      if (plugins.length === 0) throw new Error('這組同步碼沒有任何音源')
+      if (plugins.length === 0) throw new Error(t('這組同步碼沒有任何音源'))
 
       let ok = 0
       for (const p of plugins) {
@@ -1592,13 +1593,13 @@ export function useMusicApp() {
       savePluginsToStorage()
       setPluginKey(k => k + 1)
       setSyncInput('')
-      if (ok === 0) throw new Error('音源都套用失敗')
+      if (ok === 0) throw new Error(t('音源都套用失敗'))
       showNotification(
-        ok === plugins.length ? `已套用 ${ok} 個音源` : `套用了 ${ok}/${plugins.length} 個音源`,
+        ok === plugins.length ? t('已套用 {n} 個音源', { n: ok }) : t('套用了 {ok}/{total} 個音源', { ok, total: plugins.length }),
         'success',
       )
     } catch (e: any) {
-      showNotification(`套用同步碼失敗：${e?.message || e}`, 'error')
+      showNotification(t('套用同步碼失敗：{msg}', { msg: e?.message || e }), 'error')
     } finally {
       setSyncBusy(false)
     }

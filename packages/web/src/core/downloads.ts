@@ -16,6 +16,7 @@
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { isNative } from './native'
+import { t } from './i18n'
 
 /** 一首下載好的歌。存在 localStorage，音訊本體在檔案系統 */
 export type DownloadedTrack = {
@@ -64,11 +65,11 @@ const safeName = (title: string, artist: string, ext: string) => {
 
 /** 由 content-type 猜副檔名。無損是 flac，其餘按類型 */
 export const extFromContentType = (contentType: string): string => {
-  const t = (contentType || '').toLowerCase()
-  if (t.includes('flac')) return 'flac'
-  if (t.includes('ogg')) return 'ogg'
-  if (t.includes('wav')) return 'wav'
-  if (t.includes('mp4') || t.includes('m4a') || t.includes('aac')) return 'm4a'
+  const ct = (contentType || '').toLowerCase()
+  if (ct.includes('flac')) return 'flac'
+  if (ct.includes('ogg')) return 'ogg'
+  if (ct.includes('wav')) return 'wav'
+  if (ct.includes('mp4') || ct.includes('m4a') || ct.includes('aac')) return 'm4a'
   return 'mp3'
 }
 
@@ -139,7 +140,7 @@ export async function saveTrack(opts: {
 /** 把已下載的檔案交給系統分享面板，讓使用者存去別的地方 */
 export async function exportTrack(track: DownloadedTrack): Promise<void> {
   if (!isNative() || !track.path) {
-    throw new Error('這個版本沒有本機下載清單，匯出只在 App 版可用')
+    throw new Error(t('這個版本沒有本機下載清單，匯出只在 App 版可用'))
   }
   const { uri } = await Filesystem.getUri({
     path: track.path, directory: Directory.External,
@@ -148,7 +149,7 @@ export async function exportTrack(track: DownloadedTrack): Promise<void> {
     title: track.title,
     text: `${track.title} - ${track.artist}`,
     url: uri,
-    dialogTitle: '匯出到…',
+    dialogTitle: t('匯出到…'),
   })
 }
 
@@ -185,7 +186,7 @@ export async function exportTextFile(fileName: string, text: string): Promise<vo
   })
   const { uri } = await Filesystem.getUri({ path: fileName, directory: Directory.Cache })
   try {
-    await Share.share({ title: fileName, url: uri, dialogTitle: '匯出到…' })
+    await Share.share({ title: fileName, url: uri, dialogTitle: t('匯出到…') })
   } catch (e: any) {
     // 使用者關掉分享面板不是錯誤，不要對它彈失敗訊息
     if (/cancel/i.test(String(e?.message || e))) return
