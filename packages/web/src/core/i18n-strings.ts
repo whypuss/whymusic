@@ -9,6 +9,7 @@ import type { Lang } from './i18n'
 type Dict = Record<string, string>
 
 const zhHans: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': '当前的音源不支持专辑搜索。请到“设置”页移除音源后重新安装一次。',
   '歌曲': '歌曲',
 
   '已複製歌詞': '已复制歌词',
@@ -169,6 +170,7 @@ const zhHans: Dict = {
 }
 
 const en: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'Your installed source does not support album search. Remove and reinstall it in Settings.',
   '歌曲': 'Songs',
 
   '已複製歌詞': 'Lyrics copied',
@@ -329,6 +331,7 @@ const en: Dict = {
 }
 
 const ja: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'この音源はアルバム検索に対応していません。「設定」で音源を削除して再インストールしてください。',
   '歌曲': '曲',
 
   '已複製歌詞': '歌詞をコピーしました',
@@ -489,6 +492,7 @@ const ja: Dict = {
 }
 
 const ko: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': '현재 음원은 앨범 검색을 지원하지 않습니다. 설정에서 음원을 제거한 뒤 다시 설치하세요.',
   '歌曲': '곡',
 
   '已複製歌詞': '가사를 복사했습니다',
@@ -649,6 +653,7 @@ const ko: Dict = {
 }
 
 const ru: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'Установленный источник не поддерживает поиск альбомов. Удалите и переустановите его в настройках.',
   '歌曲': 'Треки',
 
   '已複製歌詞': 'Текст скопирован',
@@ -809,6 +814,7 @@ const ru: Dict = {
 }
 
 const es: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'La fuente instalada no admite búsqueda de álbumes. Quítala y vuelve a instalarla en Ajustes.',
   '歌曲': 'Canciones',
 
   '已複製歌詞': 'Letra copiada',
@@ -969,6 +975,7 @@ const es: Dict = {
 }
 
 const pt: Dict = {
+  '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'A fonte instalada não suporta busca de álbuns. Remova-a e reinstale em Ajustes.',
   '歌曲': 'Músicas',
 
   '已複製歌詞': 'Letra copiada',

@@ -677,11 +677,11 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   歌曲／專輯切換。切換後立刻重搜（同一個關鍵字換一種結果），
                   不要求使用者再按一次搜尋 —— 那個按鈕已經按過了。
 
-                  只在有音源真的支援專輯時才顯示：舊版音源（v1.9.0 以前）沒有
-                  專輯能力，按了只會回歌曲清單，看起來像壞掉。使用者更新音源後
-                  這個切換會自己出現。
+                  音源不支援專輯時**照樣顯示**這個切換，改在結果區明講要更新音源。
+                  上一版是直接隱藏它 —— 使用者的音源是舊的，於是按鈕整個消失，
+                  看起來像功能被移除，而且完全沒有線索該怎麼辦。功能藏起來
+                  比壞掉更難懂。
                 */}
-                {albumSearchSupported && (
                 <div className="mt-3">
                   <Segmented
                     value={searchType as 'music' | 'album'}
@@ -696,13 +696,14 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     ]}
                   />
                 </div>
-                )}
               </div>
               {loading && <EmptyState text={t('搜尋中…')} />}
               {!loading && results.length === 0 && (
                 <EmptyState text={pluginManager.getEnabledPlugins().length === 0
                   ? t('搜尋需要音源，請到「設置」頁安裝。')
-                  : keyword.trim() ? t('找不到符合的結果。') : t('輸入關鍵字開始搜尋。')} />
+                  : (searchType === 'album' && !albumSearchSupported)
+                    ? t('目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。')
+                    : keyword.trim() ? t('找不到符合的結果。') : t('輸入關鍵字開始搜尋。')} />
               )}
               <div className="divide-y divide-white/[0.06]">
                 {results.map(item => (
