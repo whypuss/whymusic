@@ -620,6 +620,24 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   </button>
                 </div>
 
+                {/*
+                  歌曲／專輯切換。切換後立刻重搜（同一個關鍵字換一種結果），
+                  不要求使用者再按一次搜尋 —— 那個按鈕已經按過了。
+                */}
+                <div className="mt-3">
+                  <Segmented
+                    value={searchType as 'music' | 'album'}
+                    onChange={type => {
+                      setSearchType(type)
+                      setSearchPage(1)
+                      if (keyword.trim()) search(1, false, type)
+                    }}
+                    options={[
+                      { value: 'music', label: t('歌曲') },
+                      { value: 'album', label: t('專輯') },
+                    ]}
+                  />
+                </div>
               </div>
               {loading && <EmptyState text={t('搜尋中…')} />}
               {!loading && results.length === 0 && (

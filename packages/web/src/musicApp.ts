@@ -767,8 +767,15 @@ export function useMusicApp() {
     })
   }
 
-  const search = useCallback(async (pageNum: number = 1, append = false) => {
+  /**
+   * 搜尋。type 可即時指定 —— 切換「歌曲／專輯」時要立刻用新的類型重搜，
+   * 而 setSearchType 要等下一次 render 才生效，這裡讀 state 會拿到舊值。
+   */
+  const search = useCallback(async (
+    pageNum: number = 1, append = false, type?: SearchType,
+  ) => {
     if (!keyword.trim()) return
+    const useType = type ?? searchType
     if (pageNum === 1) {
       setLoading(true)
       setResults([])
@@ -794,7 +801,7 @@ export function useMusicApp() {
       
       for (const plugin of enabledPlugins) {
         try {
-          const pluginResults = await pluginManager.searchForPlugin(plugin.name, keyword, searchType, pageNum)
+          const pluginResults = await pluginManager.searchForPlugin(plugin.name, keyword, useType, pageNum)
           if (pluginResults && pluginResults.length > 0) {
             newResults = newResults.concat(pluginResults)
             console.log('[App] Plugin results from', plugin.name, 'page', pageNum, ':', pluginResults.length)

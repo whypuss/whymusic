@@ -9,6 +9,8 @@ import type { Lang } from './i18n'
 type Dict = Record<string, string>
 
 const zhHans: Dict = {
+  '歌曲': '歌曲',
+
   '已複製歌詞': '已复制歌词',
   '複製失敗：{msg}': '复制失败：{msg}',
   '歌詞': '歌词',
@@ -167,6 +169,8 @@ const zhHans: Dict = {
 }
 
 const en: Dict = {
+  '歌曲': 'Songs',
+
   '已複製歌詞': 'Lyrics copied',
   '複製失敗：{msg}': 'Copy failed: {msg}',
   '歌詞': 'Lyrics',
@@ -325,6 +329,8 @@ const en: Dict = {
 }
 
 const ja: Dict = {
+  '歌曲': '曲',
+
   '已複製歌詞': '歌詞をコピーしました',
   '複製失敗：{msg}': 'コピー失敗：{msg}',
   '歌詞': '歌詞',
@@ -483,6 +489,8 @@ const ja: Dict = {
 }
 
 const ko: Dict = {
+  '歌曲': '곡',
+
   '已複製歌詞': '가사를 복사했습니다',
   '複製失敗：{msg}': '복사 실패: {msg}',
   '歌詞': '가사',
@@ -641,6 +649,8 @@ const ko: Dict = {
 }
 
 const ru: Dict = {
+  '歌曲': 'Треки',
+
   '已複製歌詞': 'Текст скопирован',
   '複製失敗：{msg}': 'Не удалось скопировать: {msg}',
   '歌詞': 'Текст',
@@ -799,6 +809,8 @@ const ru: Dict = {
 }
 
 const es: Dict = {
+  '歌曲': 'Canciones',
+
   '已複製歌詞': 'Letra copiada',
   '複製失敗：{msg}': 'Error al copiar: {msg}',
   '歌詞': 'Letra',
@@ -957,6 +969,8 @@ const es: Dict = {
 }
 
 const pt: Dict = {
+  '歌曲': 'Músicas',
+
   '已複製歌詞': 'Letra copiada',
   '複製失敗：{msg}': 'Falha ao copiar: {msg}',
   '歌詞': 'Letra',
