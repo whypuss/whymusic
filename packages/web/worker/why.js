@@ -619,10 +619,42 @@ async function getWhyMusicAlbum(id) {
  * 裁切後的結果自己進快取（鍵含 limit），而不是只靠 gdRequest 快取原始回應 ——
  * 叱咤那份解析後在記憶體裡是好幾十 MB，這台機器只有 256MB，留著整份不划算。
  */
+/**
+ * 輪替視窗：從整份榜單裡取哪一段。
+ *
+ * 榜單本身很少動（叱咤一週一次、網易雲的日榜一天一次），所以就算每次開 app
+ * 都重抓，同一天看到的還是那幾首 —— 使用者說的「更新頻率太慢」其實是這個。
+ * 但榜單有的歌遠比我們顯示的多（粵語 1000 首、熱門與歐美 200、其餘 100，
+ * 而畫面只放 80），所以換一段取就有新歌可看，不必等上游更新。
+ *
+ * 用時間分桶而不是每次隨機：同一段時間內重複開、切分類再切回來，看到的
+ * 是同一批歌 —— 清單在使用者眼皮底下跳動比「一直是舊的」更糟。
+ *
+ * 一天一桶：跟榜單自己的更新節奏對齊（網易雲日榜一天一次），使用者一天內
+ * 反覆開 app 看到的是同一批歌，隔天才換 —— 那是「今天的推薦」該有的樣子。
+ * 更短的桶（試過 15 分鐘）會讓早上和下午看到完全不同的清單，找不回上午
+ * 想聽但沒點的那首。
+ *
+ * 取到尾端會繞回開頭（榜單池子不大，不繞的話後段只會拿到半頁）。
+ */
+const ROTATE_BUCKET_MS = 24 * 60 * 60 * 1000
+
+function rotateWindow(list, limit, bucketMs = ROTATE_BUCKET_MS) {
+  const total = list.length
+  if (total <= limit) return list.slice(0, limit)
+  const bucket = Math.floor(Date.now() / bucketMs)
+  const offset = (bucket * limit) % total
+  const out = []
+  for (let i = 0; i < limit; i++) out.push(list[(offset + i) % total])
+  return out
+}
+
 async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
   const cat = GD_CATEGORIES[category] || GD_CATEGORIES[DEFAULT_CATEGORY]
   const orders = cat.orders || ['chart']
-  const cacheKey = `rec:${cat.list}:${orders.join('+')}:${limit}`
+  // 快取鍵帶上輪替桶：換了桶就是不同的一段歌，不能沿用上一桶的結果
+  const bucket = Math.floor(Date.now() / ROTATE_BUCKET_MS)
+  const cacheKey = `rec:${cat.list}:${orders.join('+')}:${limit}:${bucket}`
   const cached = gdCacheGet(cacheKey)
   if (cached !== undefined) return cached
 
@@ -634,20 +666,21 @@ async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
   const buckets = orders.map(
     order => sortTracks(tracks, order).map(gdTrackToItem).filter(Boolean),
   )
+  // 先交錯合併**整份**榜單（不再邊合併邊裁到 limit）—— 要輪替就得先有完整的池子
   const seen = new Set()
-  const out = []
+  const merged = []
   const maxLen = Math.max(0, ...buckets.map(b => b.length))
-  for (let idx = 0; idx < maxLen && out.length < limit; idx++) {
-    for (const bucket of buckets) {
-      if (out.length >= limit) break
-      const item = bucket[idx]
+  for (let idx = 0; idx < maxLen; idx++) {
+    for (const b of buckets) {
+      const item = b[idx]
       if (!item) continue
       const key = `${gdNormalizeName(item.title)}::${gdNormalizeName(item.artist)}`
       if (seen.has(key)) continue
       seen.add(key)
-      out.push(item)
+      merged.push(item)
     }
   }
+  const out = rotateWindow(merged, limit)
   gdCacheSet(cacheKey, out, GD_TTL.playlist)
   return out
 }
