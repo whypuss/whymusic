@@ -457,6 +457,17 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
   const installedPlugins = useMemo(() => pluginManager.getPlugins(), [pluginKey])
   /**
+   * 有沒有啟用中的音源支援專輯搜尋。沒有就不顯示「歌曲／專輯」切換 ——
+   * 舊版音源按了只會回歌曲清單，那比沒有這個按鈕更難懂。
+   */
+  const albumSearchSupported = useMemo(
+    () => pluginManager.getEnabledPlugins().some(
+      p => Array.isArray((p as any).supportedSearchType)
+        && (p as any).supportedSearchType.includes('album'),
+    ),
+    [pluginKey],
+  )
+  /**
    * 設置頁裡的「已下載歌曲」子頁面。純畫面導覽，所以留在這一層而不是進狀態層。
    * 切到別的分頁再回來時要回到設置根頁 —— 不然使用者會納悶自己怎麼在子頁面裡。
    */
@@ -665,7 +676,12 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 {/*
                   歌曲／專輯切換。切換後立刻重搜（同一個關鍵字換一種結果），
                   不要求使用者再按一次搜尋 —— 那個按鈕已經按過了。
+
+                  只在有音源真的支援專輯時才顯示：舊版音源（v1.9.0 以前）沒有
+                  專輯能力，按了只會回歌曲清單，看起來像壞掉。使用者更新音源後
+                  這個切換會自己出現。
                 */}
+                {albumSearchSupported && (
                 <div className="mt-3">
                   <Segmented
                     value={searchType as 'music' | 'album'}
@@ -680,6 +696,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     ]}
                   />
                 </div>
+                )}
               </div>
               {loading && <EmptyState text={t('搜尋中…')} />}
               {!loading && results.length === 0 && (

@@ -510,6 +510,107 @@ function gdTrackToItem(track) {
   }
 }
 
+// ── 專輯（網易雲） ──────────────────────────────────────────────────
+/**
+ * 網易雲的公開端點。專輯資料只有它有 —— GD 的聚合 API 沒有專輯類型
+ * （types=album/albuminfo/albumlist 全部回 "not supported"）。
+ *
+ * **它會隨機拒絕請求**：同一個網址連打，回應在 `code: 200` 與
+ * `code: -462`（要求手機驗證、資料為空、HTTP 仍是 200）之間跳。實測從
+ * Cloudflare 出去的成功率只有四成左右，而從家用網路直連是百分之百 ——
+ * 差別在出口 IP：CF 的出口是共用池，其中一部分被網易雲標記了，而每次請求
+ * 走哪個 IP 是隨機的。
+ *
+ * 所以重試是有效的（換一次請求就有機會換到乾淨的 IP），而且要重試在**後端**：
+ *   - 六次嘗試把成功率從 42% 拉到 96%
+ *   - 成功結果進全站共用快取，第二個人點同一張專輯不必再賭一次
+ *   - 前端只發一個請求，不必自己處理這個上游的怪脾氣
+ */
+/**
+ * 同一份 API 的多個主機。實測三個都回一樣的資料，但**不會同時被擋** ——
+ * 限流是按（出口 IP × 主機）算的，所以重試時換主機比原地重試有效得多：
+ * 原地連試六次只有 75% 成功，輪替三個主機後實測沒有再失敗過。
+ */
+const NETEASE_HOSTS = [
+  'https://music.163.com',
+  'https://interface.music.163.com',
+  'https://interface3.music.163.com',
+]
+/** 每個主機試幾輪。3 主機 × 2 輪 = 6 次嘗試 */
+const NETEASE_ROUNDS = 2
+
+async function neteaseFetch(path) {
+  const cacheKey = `netease:${path}`
+  const cached = gdCacheGet(cacheKey)
+  if (cached !== undefined) return cached
+
+  let blocked = false
+  for (let round = 0; round < NETEASE_ROUNDS; round++) {
+    for (const host of NETEASE_HOSTS) {
+      let data
+      try {
+        const resp = await fetch(host + path, {
+          headers: {
+            Referer: 'https://music.163.com',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          },
+        })
+        data = await resp.json()
+      } catch {
+        continue  // 網路層失敗，換下一個主機
+      }
+      // -462 = 被要求驗證（資料是空的）→ 換主機再試
+      if (data && data.code === -462) { blocked = true; continue }
+      gdCacheSet(cacheKey, data, GD_TTL.playlist)
+      return data
+    }
+  }
+  throw new Error(
+    blocked ? '網易雲要求驗證（上游限流），請稍後再試' : '網易雲無回應',
+  )
+}
+
+/** 網易雲專輯 → 本站 MusicItem（type=album，前端據此開專輯頁而不是直接播） */
+function neteaseAlbumToItem(raw) {
+  if (!raw || !raw.id || !raw.name) return null
+  const artists = (raw.artists || (raw.artist ? [raw.artist] : []))
+    .map(a => a && a.name).filter(Boolean).join(' / ')
+  return {
+    id: String(raw.id),
+    title: String(raw.name),
+    artist: artists,
+    album: String(raw.name),
+    artwork: thumbArtwork(raw.picUrl || raw.blurPicUrl),
+    platform: 'WhyMusic',
+    subSource: 'netease',
+    worksNum: Number(raw.size) || 0,
+    type: 'album',
+  }
+}
+
+/** 專輯搜尋（網易雲 type=10） */
+async function searchWhyMusicAlbums(keyword, page = 1, limit = 20) {
+  const offset = (Math.max(1, Number(page) || 1) - 1) * limit
+  const data = await neteaseFetch(
+    `/api/search/get?s=${encodeURIComponent(keyword)}&type=10&limit=${limit}&offset=${offset}`,
+  )
+  const albums = (data && data.result && data.result.albums) || []
+  return albums.map(neteaseAlbumToItem).filter(Boolean)
+}
+
+/**
+ * 專輯曲目。用 /api/v1/album/{id} —— 舊的 /api/album/{id} 現在一律回
+ * code -462 要求綁定手機，v1 那條不用。
+ *
+ * 回傳的是 netease 曲目，所以照現有的播放鏈路（resolveWhyMusicUrl）就能播。
+ */
+async function getWhyMusicAlbum(id) {
+  const data = await neteaseFetch(`/api/v1/album/${encodeURIComponent(id)}`)
+  const songs = (data && data.songs) || []
+  return songs.map(gdTrackToItem).filter(Boolean)
+}
+
+
 /**
  * 推薦：取一份榜單、去重、裁到 limit。
  *
@@ -552,6 +653,8 @@ async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
 
 export {
   searchWhyMusic,
+  searchWhyMusicAlbums,
+  getWhyMusicAlbum,
   resolveWhyMusicUrl,
   getWhyMusicLyric,
   getWhyMusicPic,

@@ -21,6 +21,8 @@ import {
   DEFAULT_CATEGORY,
   jsonResponse,
   GD_BITRATE,
+  searchWhyMusicAlbums,
+  getWhyMusicAlbum,
 } from './why.js'
 import {
   SYNC_CODE_LEN,
@@ -172,6 +174,22 @@ async function handleApi(pathname, request, url, env) {
       const id = url.searchParams.get('id')
       if (!id) return jsonResponse({ error: 'Missing id parameter' }, 400)
       return jsonResponse(await getWhyMusicLyric(id, url.searchParams.get('source') || ''))
+    }
+
+    // 專輯：搜尋與曲目。走網易雲（GD 沒有專輯類型），後端負責重試與快取 ——
+    // 那個上游會隨機拒絕本服務的出口 IP，見 why.js 的 neteaseFetch。
+    case '/api/why-album-search': {
+      const kw = url.searchParams.get('kw')
+      if (!kw) return jsonResponse({ error: 'Missing kw parameter' }, 400)
+      const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1)
+      const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10) || 20))
+      return jsonResponse({ data: await searchWhyMusicAlbums(kw, page, limit) })
+    }
+
+    case '/api/why-album': {
+      const id = url.searchParams.get('id')
+      if (!id) return jsonResponse({ error: 'Missing id parameter' }, 400)
+      return jsonResponse({ data: await getWhyMusicAlbum(id) })
     }
 
     case '/api/why-pic': {
