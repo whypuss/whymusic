@@ -43,6 +43,149 @@ function Segmented<T extends string>({
   )
 }
 
+/**
+ * 歌詞面板：從底部升起的全螢幕頁（點播放條打開）。
+ *
+ * 為什麼是全螢幕而不是小彈窗：歌詞要看得下去就得有篇幅 —— 小視窗只放得下三四行，
+ * 高亮那行永遠貼著邊，前後文都看不到。全螢幕還能順便把封面放大，變成一個
+ * 「正在播放」頁（Apple Music、Spotify 都是這個做法）。
+ *
+ * 自動捲動只在使用者沒有自己動的時候做：手動捲之後三秒內不搶回控制權，
+ * 否則想往下看後面的詞會被一直拉回當前行 —— 那是很惱人的體驗。
+ */
+function LyricsSheet({
+  open, onClose, item, lines, loading, index, onSeek, onCopy, formatTime, currentTime, duration,
+  isPlaying, onTogglePlay, onPrev, onNext,
+}: {
+  open: boolean
+  onClose: () => void
+  item: MusicItem | null
+  lines: { time: number; text: string }[]
+  loading: boolean
+  index: number
+  onSeek: (s: number) => void
+  onCopy: () => void
+  formatTime: (s: number) => string
+  currentTime: number
+  duration: number
+  isPlaying: boolean
+  onTogglePlay: () => void
+  onPrev: () => void
+  onNext: () => void
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef<HTMLParagraphElement>(null)
+  /** 使用者最後一次手動捲動的時間。三秒內不自動捲 */
+  const manualAtRef = useRef(0)
+
+  useEffect(() => {
+    if (!open || index < 0) return
+    if (Date.now() - manualAtRef.current < 3000) return
+    activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [open, index])
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black flex flex-col"
+      style={{
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}>
+      {/* 標題列：關閉在左（iOS 的向下箭頭＝收起），複製在右 */}
+      <div className="flex-shrink-0 flex items-center gap-2 px-3 h-12">
+        <button onClick={onClose} aria-label={t('返回')}
+          className="w-9 h-9 rounded-full flex items-center justify-center
+                     text-white/70 active:bg-white/10 transition">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+            <path d="M3 6l5 5 5-5" stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0 text-center">
+          <div className="text-[13px] font-medium truncate">{item?.title || ''}</div>
+          <div className="text-[11px] text-white/45 truncate">{item?.artist || ''}</div>
+        </div>
+        <button onClick={onCopy} disabled={lines.length === 0}
+          title={t('複製歌詞')} aria-label={t('複製歌詞')}
+          className="w-9 h-9 rounded-full flex items-center justify-center
+                     text-white/70 active:bg-white/10 disabled:opacity-30 transition">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none">
+            <rect x="5.5" y="5.5" width="8" height="8" rx="1.8" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M10.5 3.5A1.5 1.5 0 0 0 9 2H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 10"
+              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+
+      {/* 歌詞本體 */}
+      <div ref={scrollRef}
+        onPointerDown={() => { manualAtRef.current = Date.now() }}
+        onWheel={() => { manualAtRef.current = Date.now() }}
+        className="flex-1 overflow-y-auto overscroll-contain px-6">
+        <div className="max-w-xl mx-auto py-[38vh]">
+          {loading && (
+            <p className="text-center text-[15px] text-white/35">{t('載入歌詞…')}</p>
+          )}
+          {!loading && lines.length === 0 && (
+            <p className="text-center text-[15px] text-white/35">{t('這首歌沒有歌詞。')}</p>
+          )}
+          {lines.map((l, i) => (
+            <p
+              key={`${l.time}-${i}`}
+              ref={i === index ? activeRef : undefined}
+              onClick={() => onSeek(l.time)}
+              className={`py-2.5 text-center leading-snug cursor-pointer transition-all duration-300 ${
+                i === index
+                  ? 'text-[22px] font-semibold text-white'
+                  : 'text-[18px] text-white/30 active:text-white/60'
+              }`}
+            >
+              {l.text}
+            </p>
+          ))}
+        </div>
+      </div>
+
+      {/* 進度與控制。歌詞頁不該逼使用者收起面板才能換歌 */}
+      <div className="flex-shrink-0 px-6 pb-3">
+        <ProgressBar currentTime={currentTime} duration={duration}
+          onSeek={onSeek} formatTime={formatTime} />
+        <div className="relative h-12 flex items-center">
+          <span className="text-[11px] tabular-nums text-white/45">{formatTime(currentTime)}</span>
+          <button onClick={onPrev} aria-label={t('上一首')}
+            className="absolute left-1/2 -translate-x-[calc(50%+52px)] w-10 h-10 rounded-full
+                       flex items-center justify-center text-white/70 active:bg-white/10 transition">
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M11 2v10L4.5 7 11 2z" /><rect x="2" y="2" width="1.8" height="10" rx="0.9" />
+            </svg>
+          </button>
+          <button onClick={onTogglePlay} aria-label={isPlaying ? t('暫停') : t('播放')}
+            className="absolute left-1/2 -translate-x-1/2 w-12 h-12 rounded-full bg-white text-black
+                       flex items-center justify-center active:scale-95 transition-transform">
+            {isPlaying
+              ? <svg width="16" height="16" viewBox="0 0 15 15" fill="currentColor">
+                  <rect x="3" y="2" width="3.2" height="11" rx="1" />
+                  <rect x="8.8" y="2" width="3.2" height="11" rx="1" />
+                </svg>
+              : <svg width="16" height="16" viewBox="0 0 15 15" fill="currentColor">
+                  <path d="M4 2.5v10l9-5-9-5z" />
+                </svg>}
+          </button>
+          <button onClick={onNext} aria-label={t('下一首')}
+            className="absolute left-1/2 translate-x-[calc(-50%+52px)] w-10 h-10 rounded-full
+                       flex items-center justify-center text-white/70 active:bg-white/10 transition">
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M3 2v10l6.5-5L3 2z" /><rect x="10.2" y="2" width="1.8" height="10" rx="0.9" />
+            </svg>
+          </button>
+          <span className="ml-auto text-[11px] tabular-nums text-white/45">{formatTime(duration)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** 歌曲／專輯列。用微妙的分隔線而非卡片邊框，接近 iOS 的 list */
 function Row({
   item, active, onClick, onDownload, favorite, onToggleFavorite, downloading,
@@ -255,7 +398,12 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
     syncAvailable, syncBusy,
     syncCode, syncInput, toggleFavorite, togglePlay, togglePlugin,
+    lyricLines, lyricLoading, lyricIndex, copyLyrics,
   } = app
+  /** 歌詞面板開著沒。純畫面狀態，留在這一層 */
+  const [showLyrics, setShowLyrics] = useState(false)
+  // 沒有在播的東西就沒有歌詞可看，面板自動收起
+  useEffect(() => { if (!playingItem) setShowLyrics(false) }, [playingItem])
 
   const tabs = [
     { key: 'recommend' as const, label: t('推薦') },
@@ -964,13 +1112,39 @@ export default function AppleUI({ app }: { app: MusicApp }) {
         </div>
       </div>
 
+      {/* 歌詞（全螢幕，點播放條的曲目資訊打開） */}
+      <LyricsSheet
+        open={showLyrics}
+        onClose={() => setShowLyrics(false)}
+        item={playingItem}
+        lines={lyricLines}
+        loading={lyricLoading}
+        index={lyricIndex}
+        onSeek={seekTo}
+        onCopy={copyLyrics}
+        formatTime={formatTime}
+        currentTime={currentTime}
+        duration={duration}
+        isPlaying={isPlaying}
+        onTogglePlay={togglePlay}
+        onPrev={playPrev}
+        onNext={playNext}
+      />
+
       {/* ── 播放器：毛玻璃底欄 ── */}
       <div
         className="flex-shrink-0 border-t border-white/[0.08] bg-[#1C1C1E]/80 backdrop-blur-2xl"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         <div className="max-w-2xl mx-auto px-4 pt-3 pb-2">
-          <div className="flex items-center gap-3">
+          {/*
+            曲目資訊整塊可點 → 打開歌詞頁（Apple Music／Spotify 都是點迷你播放器
+            展開）。沒有在播的東西時不可點 —— 那時沒有歌詞可看。
+          */}
+          <div
+            onClick={() => { if (playingItem) setShowLyrics(true) }}
+            className={`flex items-center gap-3 ${playingItem ? 'cursor-pointer' : ''}`}
+          >
             <div className="w-10 h-10 rounded-[8px] bg-white/10 flex-shrink-0 overflow-hidden
                             flex items-center justify-center text-[15px] font-semibold text-white/60">
               {playingItem?.artwork
@@ -983,6 +1157,14 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 {playingItem?.artist || t('選擇曲目開始播放')}
               </div>
             </div>
+            {/* 有歌詞才提示可以點開，沒詞時不給假的可點感 */}
+            {playingItem && lyricLines.length > 0 && (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+                className="text-white/30 flex-shrink-0">
+                <path d="M3 5l5-3 5 3M3 11l5 3 5-3" stroke="currentColor" strokeWidth="1.5"
+                  strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
           </div>
 
           <ProgressBar

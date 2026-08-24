@@ -259,4 +259,19 @@ export class PluginManager {
       bitrate: typeof result.bitrate === 'number' ? result.bitrate : undefined,
     }
   }
+
+  /**
+   * 取歌詞原文（LRC）。音源沒有這個能力、或這首沒詞就回空字串。
+   *
+   * 只回 rawLrc，刻意不碰音源同時給的 translation：歌詞顯示原文就好 ——
+   * 中文歌顯示中文、英文歌顯示英文，不做翻譯也不轉繁簡。多一種語言疊在
+   * 畫面上，行高變兩倍、還要處理兩份時間軸對不齊。
+   */
+  async getLyric(plugin: Plugin, item: MusicItem): Promise<string> {
+    if (!plugin.getLyric) return ''
+    const result: any = await plugin.getLyric(item)
+    // 音源可能回字串、也可能回 { rawLrc }（本專案的音源是後者）
+    if (typeof result === 'string') return result
+    return String(result?.rawLrc || result?.lyric || '')
+  }
 }

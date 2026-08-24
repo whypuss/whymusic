@@ -3,6 +3,7 @@ import { Player, PluginManager, MusicItem, SearchType } from './core'
 import { isNative, viaProxy } from './core/native'
 import { t } from './core/i18n'
 import { syncNativeMedia, stopNativeMedia, onNativeControl } from './core/background'
+import { LyricLine, parseLrc, currentLyricIndex, lyricsToText } from './core/lyrics'
 import {
   DownloadedTrack, readDownloads, saveTrack, exportTrack, exportTextFile, deleteTrack, downloadKey,
 } from './core/downloads'
@@ -358,6 +359,16 @@ export function useMusicApp() {
   const [downloads, setDownloads] = useState<DownloadedTrack[]>(() => readDownloads())
   /** 正在下載的那一首的 key。一次只下一首：手機頻寬有限，並行只會互相拖慢 */
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
+  /**
+   * 歌詞。lines 已解析（去時間戳、濾掉製作人員名單），index 是目前該高亮哪一行。
+   *
+   * 不進 localStorage：一首歌的詞取一次約 500ms，而後端對 lyric 本來就有 24 小時
+   * 快取，值不到為它再疊一層前端持久化。同一首重播時的 ref 快取夠用了。
+   */
+  const [lyricLines, setLyricLines] = useState<LyricLine[]>([])
+  const [lyricLoading, setLyricLoading] = useState(false)
+  /** 上次取詞的曲目 key，避免同一首重複抓（換元素輪播時 playingItem 會重設） */
+  const lyricKeyRef = useRef<string>('')
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [currentView, setCurrentView] = useState<'search' | 'plugins' | 'recommend' | 'favorites'>('recommend')
@@ -559,6 +570,76 @@ export function useMusicApp() {
     player.setLoop(playMode === 'one')
     localStorage.setItem(STORAGE_PLAY_MODE, playMode)
   }, [playMode])
+
+  /**
+   * 換歌時取歌詞。
+   *
+   * 取詞失敗一律當成「這首沒詞」，不彈通知也不設 errorMessage —— 歌詞是附加
+   * 資訊，取不到就不顯示那一區，沒有理由打斷正在聽歌的人。
+   *
+   * 依 platform::id 判斷是否同一首：雙元素輪播換歌時 playingItem 物件會換，
+   * 但重播同一首不該再抓一次。
+   */
+  useEffect(() => {
+    if (!playingItem) {
+      setLyricLines([])
+      lyricKeyRef.current = ''
+      return
+    }
+    const key = `${playingItem.platform || ''}::${playingItem.id}`
+    if (key === lyricKeyRef.current) return
+    lyricKeyRef.current = key
+
+    let cancelled = false
+    setLyricLines([])
+    setLyricLoading(true)
+    void (async () => {
+      try {
+        const plugin = pluginManager.getPlugin(playingItem.platform || '')
+        const raw = plugin ? await pluginManager.getLyric(plugin, playingItem) : ''
+        if (!cancelled) setLyricLines(parseLrc(raw))
+      } catch (e) {
+        // 沒詞就是沒詞，不必吵
+        console.warn('[lyric] 取歌詞失敗:', e)
+        if (!cancelled) setLyricLines([])
+      } finally {
+        if (!cancelled) setLyricLoading(false)
+      }
+    })()
+    // 換歌時把前一次的請求結果丟掉，否則慢的那個回來會蓋掉新歌的詞
+    return () => { cancelled = true }
+  }, [playingItem])
+
+  /** 目前該高亮的行。-1 = 還在前奏 */
+  const lyricIndex = useMemo(
+    () => currentLyricIndex(lyricLines, currentTime),
+    [lyricLines, currentTime],
+  )
+
+  /** 複製完整歌詞（純文字，不含時間戳與製作人員名單） */
+  const copyLyrics = async () => {
+    if (lyricLines.length === 0) return
+    const text = lyricsToText(lyricLines)
+    try {
+      // Clipboard API 在 WebView 與 https 頁面都可用；失敗時退到 execCommand
+      // （舊 WebView、或非安全來源時 navigator.clipboard 是 undefined）
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      showNotification(t('已複製歌詞'), 'success')
+    } catch (e) {
+      showNotification(t('複製失敗：{msg}', { msg: e instanceof Error ? e.message : String(e) }), 'error')
+    }
+  }
 
   /**
    * MediaSession：告訴作業系統「這是一個音樂播放器」。
@@ -1636,6 +1717,10 @@ export function useMusicApp() {
     duration,
     errorMessage,
     formatTime,
+    lyricLines,
+    lyricLoading,
+    lyricIndex,
+    copyLyrics,
     goBackToSearch,
     handleDownload,
     handleItemClick,

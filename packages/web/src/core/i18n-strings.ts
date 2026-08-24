@@ -9,6 +9,13 @@ import type { Lang } from './i18n'
 type Dict = Record<string, string>
 
 const zhHans: Dict = {
+  '已複製歌詞': '已复制歌词',
+  '複製失敗：{msg}': '复制失败：{msg}',
+  '歌詞': '歌词',
+  '複製歌詞': '复制歌词',
+  '這首歌沒有歌詞。': '这首歌没有歌词。',
+  '載入歌詞…': '加载歌词…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '“{title}”在所有子音源都取不到播放地址，换一首试试。',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -160,6 +167,13 @@ const zhHans: Dict = {
 }
 
 const en: Dict = {
+  '已複製歌詞': 'Lyrics copied',
+  '複製失敗：{msg}': 'Copy failed: {msg}',
+  '歌詞': 'Lyrics',
+  '複製歌詞': 'Copy lyrics',
+  '這首歌沒有歌詞。': 'No lyrics for this track.',
+  '載入歌詞…': 'Loading lyrics…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '“{title}” has no playable URL on any sub-source — try another track.',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -311,6 +325,13 @@ const en: Dict = {
 }
 
 const ja: Dict = {
+  '已複製歌詞': '歌詞をコピーしました',
+  '複製失敗：{msg}': 'コピー失敗：{msg}',
+  '歌詞': '歌詞',
+  '複製歌詞': '歌詞をコピー',
+  '這首歌沒有歌詞。': 'この曲の歌詞はありません。',
+  '載入歌詞…': '歌詞を読み込み中…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '「{title}」はどのサブ音源でも再生 URL を取得できませんでした。別の曲をお試しください。',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -462,6 +483,13 @@ const ja: Dict = {
 }
 
 const ko: Dict = {
+  '已複製歌詞': '가사를 복사했습니다',
+  '複製失敗：{msg}': '복사 실패: {msg}',
+  '歌詞': '가사',
+  '複製歌詞': '가사 복사',
+  '這首歌沒有歌詞。': '이 곡의 가사가 없습니다.',
+  '載入歌詞…': '가사 불러오는 중…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '"{title}"은(는) 어느 하위 음원에서도 재생 주소를 얻지 못했습니다. 다른 곡을 시도해 보세요.',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -613,6 +641,13 @@ const ko: Dict = {
 }
 
 const ru: Dict = {
+  '已複製歌詞': 'Текст скопирован',
+  '複製失敗：{msg}': 'Не удалось скопировать: {msg}',
+  '歌詞': 'Текст',
+  '複製歌詞': 'Копировать текст',
+  '這首歌沒有歌詞。': 'Для этого трека нет текста.',
+  '載入歌詞…': 'Загрузка текста…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '«{title}»: ни один под-источник не дал ссылку на воспроизведение — попробуйте другой трек.',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -764,6 +799,13 @@ const ru: Dict = {
 }
 
 const es: Dict = {
+  '已複製歌詞': 'Letra copiada',
+  '複製失敗：{msg}': 'Error al copiar: {msg}',
+  '歌詞': 'Letra',
+  '複製歌詞': 'Copiar letra',
+  '這首歌沒有歌詞。': 'Esta pista no tiene letra.',
+  '載入歌詞…': 'Cargando letra…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '«{title}» no tiene URL reproducible en ninguna subfuente; prueba otra pista.',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
@@ -915,6 +957,13 @@ const es: Dict = {
 }
 
 const pt: Dict = {
+  '已複製歌詞': 'Letra copiada',
+  '複製失敗：{msg}': 'Falha ao copiar: {msg}',
+  '歌詞': 'Letra',
+  '複製歌詞': 'Copiar letra',
+  '這首歌沒有歌詞。': 'Esta faixa não tem letra.',
+  '載入歌詞…': 'Carregando letra…',
+
   '「{title}」在所有子音源都取不到播放位址，換一首試試。':
     '“{title}” não tem URL reproduzível em nenhuma subfonte; tente outra faixa.',
   '「匯出」會開啟系統分享面板，可以存到「檔案」、雲端硬碟或傳給別人。':
