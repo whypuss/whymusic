@@ -14,3 +14,32 @@ body {
   min-height: 100vh;
   padding-bottom: 80px; /* 給底部播放條留空間 */
 }
+
+/*
+ * 歌詞頁的唱片轉盤。
+ *
+ * Tailwind 的 animate-spin 是一秒一圈 —— 那是載入指示器的速度，用在封面上
+ * 像壞掉。這裡取 24 秒一圈：看得出在轉，但不會搶走歌詞的注意力。
+ *
+ * 暫停時用 animation-play-state: paused 停在當下的角度，而不是移除
+ * animation（那會瞬間彈回 0 度，看起來像跳針）。
+ */
+@keyframes whymusic-disc-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.disc-spin {
+  animation: whymusic-disc-spin 24s linear infinite;
+}
+
+.disc-spin.is-paused {
+  animation-play-state: paused;
+}
+
+/* 會動的東西一律尊重系統的「減少動態效果」設定 */
+@media (prefers-reduced-motion: reduce) {
+  .disc-spin {
+    animation: none;
+  }
+}

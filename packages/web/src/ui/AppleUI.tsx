@@ -79,8 +79,14 @@ function LyricsSheet({
   const manualAtRef = useRef(0)
 
   useEffect(() => {
-    if (!open || index < 0) return
+    if (!open) return
     if (Date.now() - manualAtRef.current < 3000) return
+    // 前奏期間（還沒唱到第一句）沒有「當前行」可置中。捲到頂讓開頭幾句看得見 ——
+    // 不做的話會停在上方的留白裡，看起來像沒抓到歌詞。
+    if (index < 0) {
+      scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
     activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [open, index])
 
@@ -118,12 +124,34 @@ function LyricsSheet({
         </button>
       </div>
 
+      {/*
+        唱片轉盤。圓形＋播放時緩慢轉動 —— 歌詞頁除了字之外需要一個「還在播」的
+        視覺線索，而封面本來就在手上，不必另外做動畫元件。
+        暫停時停在當下角度（見 index.css 的 is-paused）。
+        尺寸用 vh 而不是固定 px：小螢幕上不能把歌詞擠掉。
+      */}
+      <div className="flex-shrink-0 flex justify-center pt-1 pb-3">
+        <div className={`disc-spin ${isPlaying ? '' : 'is-paused'}
+                        w-[18vh] h-[18vh] max-w-[140px] max-h-[140px] rounded-full
+                        overflow-hidden bg-white/[0.07] ring-1 ring-white/10
+                        flex items-center justify-center`}>
+          {item?.artwork
+            ? <img src={item.artwork} alt="" className="w-full h-full object-cover" />
+            : <span className="text-[28px] text-white/25">♪</span>}
+        </div>
+      </div>
+
       {/* 歌詞本體 */}
       <div ref={scrollRef}
         onPointerDown={() => { manualAtRef.current = Date.now() }}
         onWheel={() => { manualAtRef.current = Date.now() }}
         className="flex-1 overflow-y-auto overscroll-contain px-6">
-        <div className="max-w-xl mx-auto py-[38vh]">
+        {/*
+          上下留白要夠讓第一句與最後一句也能捲到「畫面中央」（scrollIntoView
+          block:'center' 需要兩側有空間）。取 26vh 而不是半個畫面高：唱片與
+          控制列已經吃掉上下各兩成，留白過多會讓前奏期間看起來一片空白。
+        */}
+        <div className="max-w-xl mx-auto py-[26vh]">
           {loading && (
             <p className="text-center text-[15px] text-white/35">{t('載入歌詞…')}</p>
           )}
@@ -405,6 +433,20 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   // 沒有在播的東西就沒有歌詞可看，面板自動收起
   useEffect(() => { if (!playingItem) setShowLyrics(false) }, [playingItem])
 
+  /**
+   * 點歌 → 播放並直接展開歌詞頁。
+   *
+   * 只在**使用者自己點**時展開，不是「開始播放就展開」：自動續播（一首播完接
+   * 下一首）如果也強制彈出，使用者好不容易收起面板回到清單，下一首一到又被
+   * 蓋掉 —— 那是搶控制權。所以掛在點擊上，而不是掛在 playingItem 變化上。
+   *
+   * 專輯／歌單那一列點下去是進專輯頁而不是播放，那時不要展開歌詞。
+   */
+  const playAndShowLyrics = (item: MusicItem) => {
+    handleItemClick(item)
+    if (item.type !== 'album' && item.type !== 'sheet') setShowLyrics(true)
+  }
+
   const tabs = [
     { key: 'recommend' as const, label: t('推薦') },
     { key: 'search' as const, label: t('搜尋') },
@@ -549,7 +591,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     key={`${item.platform}-${item.id}`}
                     item={item}
                     active={playingItem?.id === item.id}
-                    onClick={() => handleItemClick(item)}
+                    onClick={() => playAndShowLyrics(item)}
                     onDownload={() => handleDownload(item)}
                     downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     favorite={isFavorite(item)}
@@ -578,7 +620,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     key={`${item.platform}-${item.id}`}
                     item={item}
                     active={playingItem?.id === item.id}
-                    onClick={() => handleItemClick(item)}
+                    onClick={() => playAndShowLyrics(item)}
                     onDownload={() => handleDownload(item)}
                     downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     favorite
@@ -651,7 +693,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     key={`${item.platform}-${item.id}`}
                     item={item}
                     active={playingItem?.id === item.id}
-                    onClick={() => handleItemClick(item)}
+                    onClick={() => playAndShowLyrics(item)}
                     onDownload={() => handleDownload(item)}
                     downloading={downloadingKey === `${item.platform || ''}::${item.id}`}
                     // 專輯／歌單是容器，收藏它沒有意義（收藏頁要能直接播）
@@ -708,10 +750,13 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                     key={`${track.id}-${idx}`}
                     item={track}
                     active={playingItem?.id === track.id}
-                    onClick={() => play(
-                      { ...track, _albumDetail: albumDetail, _trackIndex: idx },
-                      { list: albumTracks, index: idx, order: 'sequential' },
-                    )}
+                    onClick={() => {
+                      play(
+                        { ...track, _albumDetail: albumDetail, _trackIndex: idx },
+                        { list: albumTracks, index: idx, order: 'sequential' },
+                      )
+                      setShowLyrics(true)
+                    }}
                     onDownload={() => handleDownload(track)}
                     downloading={downloadingKey === `${track.platform || ''}::${track.id}`}
                     favorite={isFavorite(track)}
