@@ -457,17 +457,6 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
   const installedPlugins = useMemo(() => pluginManager.getPlugins(), [pluginKey])
   /**
-   * 有沒有啟用中的音源支援專輯搜尋。沒有就不顯示「歌曲／專輯」切換 ——
-   * 舊版音源按了只會回歌曲清單，那比沒有這個按鈕更難懂。
-   */
-  const albumSearchSupported = useMemo(
-    () => pluginManager.getEnabledPlugins().some(
-      p => Array.isArray((p as any).supportedSearchType)
-        && (p as any).supportedSearchType.includes('album'),
-    ),
-    [pluginKey],
-  )
-  /**
    * 設置頁裡的「已下載歌曲」子頁面。純畫面導覽，所以留在這一層而不是進狀態層。
    * 切到別的分頁再回來時要回到設置根頁 —— 不然使用者會納悶自己怎麼在子頁面裡。
    */
@@ -674,36 +663,18 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 </div>
 
                 {/*
-                  歌曲／專輯切換。切換後立刻重搜（同一個關鍵字換一種結果），
-                  不要求使用者再按一次搜尋 —— 那個按鈕已經按過了。
-
-                  音源不支援專輯時**照樣顯示**這個切換，改在結果區明講要更新音源。
-                  上一版是直接隱藏它 —— 使用者的音源是舊的，於是按鈕整個消失，
-                  看起來像功能被移除，而且完全沒有線索該怎麼辦。功能藏起來
-                  比壞掉更難懂。
+                  這裡曾經有「歌曲／專輯」切換。移掉了 —— 搜尋頁只搜歌。
+                  專輯的資料只有網易雲有，而它會隨機拒絕請求（見 worker/why.js
+                  的 neteaseFetch），做到可靠要靠輪替主機重試，體驗仍然不穩。
+                  能力本身留在音源與後端（/api/why-album*），要恢復只要把這段
+                  切換器加回來。
                 */}
-                <div className="mt-3">
-                  <Segmented
-                    value={searchType as 'music' | 'album'}
-                    onChange={type => {
-                      setSearchType(type)
-                      setSearchPage(1)
-                      if (keyword.trim()) search(1, false, type)
-                    }}
-                    options={[
-                      { value: 'music', label: t('歌曲') },
-                      { value: 'album', label: t('專輯') },
-                    ]}
-                  />
-                </div>
               </div>
               {loading && <EmptyState text={t('搜尋中…')} />}
               {!loading && results.length === 0 && (
                 <EmptyState text={pluginManager.getEnabledPlugins().length === 0
                   ? t('搜尋需要音源，請到「設置」頁安裝。')
-                  : (searchType === 'album' && !albumSearchSupported)
-                    ? t('目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。')
-                    : keyword.trim() ? t('找不到符合的結果。') : t('輸入關鍵字開始搜尋。')} />
+                  : keyword.trim() ? t('找不到符合的結果。') : t('輸入關鍵字開始搜尋。')} />
               )}
               <div className="divide-y divide-white/[0.06]">
                 {results.map(item => (

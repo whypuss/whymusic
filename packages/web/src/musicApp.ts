@@ -160,16 +160,24 @@ let pluginsInitialized = false
 let pluginsReady = false  // ← 只有當插件真正加載完成後才設為 true
 
 /**
- * 推薦清單的快取。榜單一天才變一次（叱咤是一週），而取一次很貴 —— APK 沒有後端，
- * 粵語那份是裝置直抓 2.4MB。所以存起來，開 app 與切分類都先用快取。
+ * 推薦清單的快取。用途是**瞬間有東西看**，不是省請求：開 app 與切分類先秀上次的
+ * 結果（不轉圈），同時在背景重抓最新的 —— 取一次很貴（APK 沒有後端，粵語那份是
+ * 裝置直抓 2.4MB），但畫面不必等它。
  *
- * TTL 六小時：比榜單更新頻率短，又足以覆蓋一整天的零散使用。過期不是丟掉，
- * 而是「先顯示、背景換新」（見 loadRecommend）—— 舊歌單也遠比空白畫面有用。
+ * 曾經是「新鮮就不重抓」，結果清單被凍結整個 TTL，開十次 app 看到同一批歌。
+ * 現在每次載入都重抓，TTL 只用來判斷舊資料還值不值得拿來墊檔。
  *
  * 一個分類 80 首約 24KB，五個分類共約 120KB，在 localStorage 的容量裡微不足道。
  */
 const STORAGE_RECOMMEND_CACHE = 'musicfree-recommend-cache'
-const RECOMMEND_TTL = 6 * 60 * 60 * 1000
+/**
+ * 快取多舊就不值得再拿來顯示。
+ *
+ * 這**不是**「多久更新一次」—— 每次載入都會在背景重抓（見 loadRecommend）。
+ * 它只決定「開 app 的瞬間要不要先拿舊資料墊檔」：一天內的榜單先顯示出來，
+ * 比空白畫面有用；再舊就寧可轉圈等新的。
+ */
+const RECOMMEND_TTL = 24 * 60 * 60 * 1000
 
 type RecommendCacheEntry = { at: number; songs: MusicItem[]; caption?: string }
 
@@ -1183,12 +1191,16 @@ export function useMusicApp() {
 
     const cached = opts.force ? null : readRecommendCache(category)
     if (cached) {
-      // 先給畫面。不轉圈 —— 使用者要的是「馬上看到歌」
+      // 先給畫面。不轉圈 —— 使用者要的是「馬上看到歌」。
+      //
+      // 然後**一定**在背景重抓，不看快取新不新鮮：快取的用途是「瞬間有東西看」，
+      // 不是「省下請求」。原本新鮮就直接 return，等於清單被凍結整個 TTL —— 開十次
+      // app 看到的是同一批歌，那正是使用者說的「更新頻率太慢」。
+      // 一次重抓約 24KB，換來每次打開都是最新的榜單，很划算。
       setRecommendSongs(cached.songs)
       setRecommendCaption(cached.caption || '')
       setRecommendLoading(false)
-      if (cached.fresh) return
-      // 過期了：畫面留著舊的，背景靜靜換新（失敗就繼續用舊的，總比空白好）
+      // 失敗就繼續用舊的，總比空白好
     } else {
       // 沒快取才清空並轉圈。切分類時若留著上一個分類的歌，
       // 使用者會看到錯的清單，點下去播的也是那一首

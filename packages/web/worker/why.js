@@ -210,7 +210,9 @@ const DEFAULT_CATEGORY = 'cantonese'
 const RECOMMEND_CATEGORIES = Object.keys(GD_CATEGORIES)
 
 // 上游按 IP 限流，而本服務所有使用者共用同一出口 IP，故一律走 TTL 快取。
-const GD_TTL = { search: 600e3, url: 1200e3, pic: 864e5, lyric: 864e5, playlist: 1800e3 }
+// playlist 是榜單：前端每次開都會來拿，所以這層快取決定使用者實際看到的新鮮度。
+// 10 分鐘 —— 短到榜單一動就跟上，長到不會讓每個訪客都去打一次 2.4MB 的上游。
+const GD_TTL = { search: 600e3, url: 1200e3, pic: 864e5, lyric: 864e5, playlist: 600e3 }
 const GD_CACHE_MAX = 500
 const gdCache = new Map()
 
