@@ -111,17 +111,26 @@ async function assertProxyTargetSafe(rawUrl) {
   const host = basic.url.hostname.replace(/^\[|\]$/g, '')
   // host 是 IP 字面的話 checkProxyTarget 已驗過，不必再解析
   if (/^[\d.]+$/.test(host) || host.includes(':')) return basic
-  try {
-    const results = await dnsLookup(host, { all: true })
-    for (const { address } of results) {
-      if (isPrivateIp(address)) {
-        return { ok: false, reason: `${host} 解析到私有位址 ${address}` }
+  // EAI_AGAIN 是解析器暫時故障（上游 DNS 超時等），不是「這個域名不存在」——
+  // 音訊 CDN（music.126.net 一類）域名長 CNAME 鏈，最容易踩到。重試兩次再放棄，
+  // 否則一次抖動就讓整首歌播不出來。
+  let lastErr
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const results = await dnsLookup(host, { all: true })
+      for (const { address } of results) {
+        if (isPrivateIp(address)) {
+          return { ok: false, reason: `${host} 解析到私有位址 ${address}` }
+        }
       }
+      return basic
+    } catch (e) {
+      lastErr = e
+      if (e.code !== 'EAI_AGAIN') break
+      await new Promise((r) => setTimeout(r, 200 * (attempt + 1)))
     }
-  } catch (e) {
-    return { ok: false, reason: `無法解析 host：${e.message}` }
   }
-  return basic
+  return { ok: false, reason: `無法解析 host：${lastErr.message}` }
 }
 
 /**
