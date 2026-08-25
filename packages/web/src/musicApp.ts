@@ -225,6 +225,33 @@ const readRecommendCache = (
   }
 }
 
+/**
+ * 刷新種子。傳給音源，讓它換一批歌 —— 不然「刷新」只是把同一批重抓一次：
+ * 輪替是按日期算的，同一天算出來的必然一樣，使用者按了看不出任何變化。
+ * 一個分類一個計數，按一次加一；隔天日期本身也會換，兩者相加就是「一天自動
+ * 換一次，想現在換就按刷新」。
+ */
+const STORAGE_RECOMMEND_SEED = 'whymusic-recommend-seed'
+
+const readRecommendSeed = (category: RecommendCategory): number => {
+  try {
+    const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_SEED) || '{}')
+    return Number(all[category]) || 0
+  } catch {
+    return 0
+  }
+}
+
+const bumpRecommendSeed = (category: RecommendCategory): number => {
+  const next = readRecommendSeed(category) + 1
+  try {
+    const all = JSON.parse(localStorage.getItem(STORAGE_RECOMMEND_SEED) || '{}')
+    all[category] = next
+    localStorage.setItem(STORAGE_RECOMMEND_SEED, JSON.stringify(all))
+  } catch { /* 存不進去也還是回新值：這次刷新照樣換得到一批 */ }
+  return next
+}
+
 /** 清掉整份推薦快取。換音源時必須做 —— 快取內容是「某個音源給的」 */
 const clearRecommendCache = () => {
   try {
@@ -1255,7 +1282,9 @@ export function useMusicApp() {
       let supported = false
       for (const plugin of enabled) {
         try {
-          const res = await pluginManager.getRecommendForPlugin(plugin.name, category, RECOMMEND_LIMIT)
+          const res = await pluginManager.getRecommendForPlugin(
+            plugin.name, category, RECOMMEND_LIMIT, readRecommendSeed(category),
+          )
           if (res === null) continue  // 該插件不提供推薦
           supported = true
           songs = songs.concat(res.songs)
@@ -1294,7 +1323,14 @@ export function useMusicApp() {
   }
 
   /** 手動重新整理推薦：略過快取，強制抓最新 */
-  const refreshRecommend = () => loadRecommend(recommendCategory, { force: true })
+  /**
+   * 刷新：換一批歌，不是重抓同一批。所以先把種子加一 —— 只 force 的話會拿到
+   * 一模一樣的清單（輪替按日期算），按了像沒反應。
+   */
+  const refreshRecommend = () => {
+    bumpRecommendSeed(recommendCategory)
+    return loadRecommend(recommendCategory, { force: true })
+  }
 
   // 點擊項目：歌曲直接播放，專輯/歌單展開詳情
   /**

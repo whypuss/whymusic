@@ -203,13 +203,15 @@ export class PluginManager {
    * 給多少都不會炸到畫面。
    */
   async getRecommendForPlugin(
-    name: string, category: string, limit = 40,
+    name: string, category: string, limit = 40, seed = 0,
   ): Promise<{ songs: MusicItem[]; caption?: string } | null> {
     const p = this.plugins.find(p => p.name.toLowerCase() === name.toLowerCase())
     if (!p || !this.enabled.has(p.name)) return null
     const fn = (p as any).getRecommend
     if (typeof fn !== 'function') return null
-    const result: any = await fn.call(p, category, limit) ?? {}
+    // seed：使用者按「刷新」時遞增，讓音源換一批歌而不必等隔天。舊音源不吃這個
+    // 參數，多傳無妨（JS 會忽略多餘實參）—— 那時刷新就只是重抓同一批。
+    const result: any = await fn.call(p, category, limit, seed) ?? {}
     return {
       songs: this.tagItems(normalizeItemList(result), p.name).slice(0, limit),
       // 音源可以自報「這批歌是哪來的」。app 不該知道任何音源用了什麼榜單，

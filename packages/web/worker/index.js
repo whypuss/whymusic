@@ -210,8 +210,11 @@ async function handleApi(pathname, request, url, env) {
       const requested = url.searchParams.get('cat') || ''
       const category = RECOMMEND_CATEGORIES.includes(requested) ? requested : DEFAULT_CATEGORY
       const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '40', 10) || 40))
+      // seed：使用者按「刷新」時前端會遞增它，用來換一批歌而不必等隔天。
+      // 不帶就是 0（舊版插件），那就只有「一天一換」那條。
+      const seed = url.searchParams.get('seed') || '0'
       return jsonResponse({
-        category, data: await recommendWhyMusic(category, limit),
+        category, data: await recommendWhyMusic(category, limit, seed),
       })
     }
 

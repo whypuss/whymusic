@@ -1078,12 +1078,12 @@ function dailyShuffle(list, limit, seedKey = '') {
   return arr.slice(0, limit)
 }
 
-async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
+async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40, seed = '0') {
   const cat = GD_CATEGORIES[category] || GD_CATEGORIES[DEFAULT_CATEGORY]
   const orders = cat.orders || ['chart']
   // 快取鍵帶上輪替桶：換了桶就是不同的一段歌，不能沿用上一桶的結果
   const bucket = Math.floor(Date.now() / ROTATE_BUCKET_MS)
-  const cacheKey = `rec:${cat.list}:${orders.join('+')}:${limit}:${bucket}`
+  const cacheKey = `rec:${cat.list}:${orders.join('+')}:${limit}:${bucket}:${seed}`
   const cached = gdCacheGet(cacheKey)
   if (cached !== undefined) return cached
 
@@ -1109,7 +1109,7 @@ async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
       merged.push(item)
     }
   }
-  const out = dailyShuffle(merged, limit, cat.list)
+  const out = dailyShuffle(merged, limit, `${cat.list}:${seed}`)
   gdCacheSet(cacheKey, out, GD_TTL.playlist)
   return out
 }
@@ -1413,8 +1413,10 @@ const server = http.createServer(async (req, res) => {
       const requested = url.searchParams.get('cat') || ''
       const category = RECOMMEND_CATEGORIES.includes(requested) ? requested : DEFAULT_CATEGORY
       const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '40', 10) || 40))
+      // seed：使用者按「刷新」時前端遞增它，換一批歌而不必等隔天。舊版插件不帶就是 0。
+      const seed = url.searchParams.get('seed') || '0'
       try {
-        jsonResponse(res, { category, data: await recommendWhyMusic(category, limit) })
+        jsonResponse(res, { category, data: await recommendWhyMusic(category, limit, seed) })
       } catch (err) {
         console.error('[recommend] Error:', err.message)
         jsonResponse(res, { error: err.message }, 500)
