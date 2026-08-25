@@ -434,14 +434,22 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   useEffect(() => { if (!playingItem) setShowLyrics(false) }, [playingItem])
 
   /**
-   * 系統「返回」（Android 側滑／返回鍵、瀏覽器上一頁）在歌詞頁開著時應該
-   * 只關掉歌詞頁，而不是退出 app：開頁時壓一筆歷史，返回手勢消掉的是這筆。
-   * Capacitor 的原生返回鍵預設就是「WebView 有歷史可退就退」，所以 APK 與
-   * 網頁版走的是同一條路，不需要另掛原生事件。
-   * 不是靠返回關的（點返回鈕、切到專輯、停播自動收起）要把那筆歷史消掉，
-   * 否則下一次按返回會白按一下。
+   * 系統「返回」在歌詞頁開著時應該只把歌詞頁縮小回主頁，而不是退出 app。
+   *
+   * 兩個宿主兩條路，都要掛：
+   * - **網頁版**：靠 history —— 開頁時壓一筆，瀏覽器上一頁消掉的就是這筆。
+   *   不是靠返回關的（點返回鈕、切到專輯、停播自動收起）要把那筆消掉，
+   *   否則下一次按返回會白按一下。
+   * - **APK**：原生返回鍵不走 WebView 歷史（實測 `canGoBack()` 對 pushState
+   *   加的那筆回 false），所以 MainActivity 改成呼叫這裡掛的
+   *   `__whymusicHandleBack`：回 true 表示前端吃掉了，回 false 才退出 app。
    */
   useEffect(() => {
+    ;(window as any).__whymusicHandleBack = () => {
+      if (!showLyrics) return false
+      setShowLyrics(false)
+      return true
+    }
     if (!showLyrics) return
     history.pushState({ whymusicLyrics: true }, '')
     const onPop = () => setShowLyrics(false)
