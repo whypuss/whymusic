@@ -205,11 +205,16 @@ const readRecommendCache = (
     const hit: RecommendCacheEntry | undefined = all[category]
     if (!hit || !Array.isArray(hit.songs) || hit.songs.length === 0) return null
     const age = Date.now() - hit.at
+    // 快取裡的歌指向已經不存在的音源就作廢 —— 顯示出來也是每首都
+    // 「找不到音源」，不如轉圈重抓，讓現在裝著的音源重建清單。
+    // 整批歌來自同一個音源，驗第一首就夠。
+    const producer = hit.songs[0]?.platform
+    const producerInstalled = !producer || !!pluginManager.getPlugin(producer)
     return {
       songs: hit.songs,
       caption: hit.caption,
       // 太舊就不值得拿來墊檔了，寧可轉圈等新的
-      usable: age < RECOMMEND_TTL,
+      usable: age < RECOMMEND_TTL && producerInstalled,
       // 過了最小間隔就重抓；**換日一定重抓** —— 那是輪替換一段歌的時刻，
       // 差幾分鐘也要跟上，不然使用者早上開 app 看到的還是昨天那批。
       shouldRevalidate: age > RECOMMEND_REVALIDATE_MS

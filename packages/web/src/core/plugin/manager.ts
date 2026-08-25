@@ -132,18 +132,12 @@ export class PluginManager {
         // 2. []                         ← YouTube 插件直接返回數組
         // 3. null/undefined            ← 插件不支持該搜索類型
         if (Array.isArray(result.data)) {
-          result.data.forEach((item: any) => {
-            if (!item.platform) item.platform = p.name
-            if (!item.source) item.source = p.name
-          })
+          this.tagItems(result.data, p.name)
           allResults.push(...result.data)
           count = result.data.length
         } else if (Array.isArray(result)) {
           // YouTube 插件直接返回數組
-          result.forEach((item: any) => {
-            if (!item.platform) item.platform = p.name
-            if (!item.source) item.source = p.name
-          })
+          this.tagItems(result, p.name)
           allResults.push(...result)
           count = result.length
         }
@@ -182,10 +176,17 @@ export class PluginManager {
     return this.tagItems(normalizeItemList(result), p.name)
   }
 
-  /** 補上 platform/source，讓 app 不必知道 item 來自哪個插件 */
+  /**
+   * 掛上 platform/source，讓 app 不必知道 item 來自哪個插件。
+   * platform 一律覆寫成「產生這批 item 的插件」：後端端點會把 platform 寫死成
+   * 自己的名字（why.js 寫 "WhyMusic"），別的插件透傳那份資料時，item 就會指向
+   * 一個可能不存在的插件 —— 播放／下載按 item.platform 派發，於是每首歌都彈
+   * 「找不到音源」。派發語意上 item 本來就屬於抓到它的插件，覆寫才是對的。
+   * source 是子源（netease/kuwo…），插件自己回報的要保留，只補缺。
+   */
   private tagItems(items: any[], pluginName: string): MusicItem[] {
     items.forEach((item: any) => {
-      if (!item.platform) item.platform = pluginName
+      item.platform = pluginName
       if (!item.source) item.source = pluginName
     })
     return items as MusicItem[]
