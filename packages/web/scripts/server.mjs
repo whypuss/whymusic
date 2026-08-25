@@ -1050,18 +1050,32 @@ async function getWhyMusicAlbum(id) {
  * 更短的桶（試過 15 分鐘）會讓早上和下午看到完全不同的清單，找不回上午
  * 想聽但沒點的那首。
  *
- * 取到尾端會繞回開頭（榜單池子不大，不繞的話後段只會拿到半頁）。
+ * 取法是「以日期桶＋榜單做種子的確定性洗牌」而不是換窗口：窗口對不足兩頁的
+ * 池子（Kpop／中文去重後 ~100 首、畫面 80 首）相鄰兩天重疊七成多，看起來就
+ * 像沒更新。洗牌讓池子再小每天也是全新的順序與選曲；種子一天一換，當天內
+ * 反覆開 app 算出來的都是同一批。
  */
 const ROTATE_BUCKET_MS = 24 * 60 * 60 * 1000
 
-function rotateWindow(list, limit, bucketMs = ROTATE_BUCKET_MS) {
-  const total = list.length
-  if (total <= limit) return list.slice(0, limit)
-  const bucket = Math.floor(Date.now() / bucketMs)
-  const offset = (bucket * limit) % total
-  const out = []
-  for (let i = 0; i < limit; i++) out.push(list[(offset + i) % total])
-  return out
+function dailyShuffle(list, limit, seedKey = '') {
+  if (list.length === 0) return []
+  let seed = Math.floor(Date.now() / ROTATE_BUCKET_MS)
+  const s = String(seedKey)
+  for (let i = 0; i < s.length; i++) seed = (seed * 31 + s.charCodeAt(i)) | 0
+  // mulberry32：夠均勻的小型 PRNG，Worker／Node／瀏覽器沙箱都能跑
+  let a = seed >>> 0
+  const rand = () => {
+    a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const arr = list.slice()
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp
+  }
+  return arr.slice(0, limit)
 }
 
 async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
@@ -1095,7 +1109,7 @@ async function recommendWhyMusic(category = DEFAULT_CATEGORY, limit = 40) {
       merged.push(item)
     }
   }
-  const out = rotateWindow(merged, limit)
+  const out = dailyShuffle(merged, limit, cat.list)
   gdCacheSet(cacheKey, out, GD_TTL.playlist)
   return out
 }
