@@ -22,8 +22,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // versionCode = 主*10000 + 次*100 + 修訂（1.8.0 → 10800），升版只能往上加
-        versionCode 11005
-        versionName "1.10.5"
+        versionCode 11006
+        versionName "1.10.6"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

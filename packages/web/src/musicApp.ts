@@ -78,6 +78,45 @@ const QUALITY_MIGRATION: Record<string, Quality> = {
 const RECOMMEND_LIMIT = 80
 
 /**
+ * 跟音源要幾首（池子）。畫面只顯示 RECOMMEND_LIMIT 首，多要的那些是「刷新」
+ * 的本錢：按刷新時直接從池子裡重洗出另外 80 首，不必再打網路、也**不必音源
+ * 配合** —— 音源只要認得 limit 就行，多舊的版本都吃這一套。
+ *
+ * 之前把換批的責任交給音源（傳 seed 給它），結果是使用者不更新音源就等於沒有
+ * 這個功能，按了完全沒反應。責任放在 app 這邊才是對的。
+ *
+ * 200 是後端對 limit 的上限，也是 localStorage 存得下的量（一個分類約 60KB）。
+ */
+const RECOMMEND_POOL = 200
+
+/**
+ * 從池子裡挑出這次要顯示的 limit 首：以「日期＋分類＋刷新次數」為種子洗牌。
+ * 同一天不按刷新看到的就是同一批（清單不會在眼皮底下跳動），按一次刷新換一批，
+ * 隔天日期變了也自動換。與後端／音源同一套洗牌，只是這裡吃的是已經到手的池子。
+ */
+const pickRecommendWindow = (
+  pool: MusicItem[], category: string, seed: number, limit = RECOMMEND_LIMIT,
+): MusicItem[] => {
+  if (pool.length <= limit) return pool.slice(0, limit)
+  const key = `${category}:${seed}`
+  let s = Math.floor(Date.now() / (24 * 60 * 60 * 1000))
+  for (let i = 0; i < key.length; i++) s = (s * 31 + key.charCodeAt(i)) | 0
+  let a = s >>> 0
+  const rand = () => {
+    a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  const arr = pool.slice()
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp
+  }
+  return arr.slice(0, limit)
+}
+
+/**
  * 推薦分類。一排五個標籤，沒有第二個軸 —— 要在一個分類裡呈現不同面向
  * （粵語的最新與熱門）是把同一份榜單排兩次後交錯，由音源那邊處理，
  * 不必在畫面上多一行按鈕、也不必多抓一次上游。
@@ -1247,17 +1286,25 @@ export function useMusicApp() {
     localStorage.setItem(STORAGE_RECOMMEND_CAT, category)
     setRecommendUnsupported(false)
 
-    const hit = opts.force ? null : readRecommendCache(category)
+    // force 也照樣讀快取：快取存的是**池子**，刷新第一件事就是從它重洗出另一批，
+    // 使用者按下去就看到新清單，不必等網路（背景照樣去抓新的池子）。
+    const hit = readRecommendCache(category)
     // 太舊的快取不拿來墊檔（當作沒有），但它的存在本身不影響要不要重抓
     const cached = hit && hit.usable ? hit : null
-    if (cached) {
+    if (cached && opts.force) {
+      // 刷新：就地換一批。池子夠大時每次挑出來的 80 首都不一樣
+      setRecommendSongs(pickRecommendWindow(cached.songs, category, readRecommendSeed(category)))
+      setRecommendCaption(cached.caption || '')
+      setRecommendLoading(false)
+      // 不 return：順手在背景抓一份新池子，下次刷新的素材更新
+    } else if (cached) {
       // 先給畫面。不轉圈 —— 使用者要的是「馬上看到歌」。
       //
       // 然後**一定**在背景重抓，不看快取新不新鮮：快取的用途是「瞬間有東西看」，
       // 不是「省下請求」。原本新鮮就直接 return，等於清單被凍結整個 TTL —— 開十次
       // app 看到的是同一批歌，那正是使用者說的「更新頻率太慢」。
       // 一次重抓約 24KB，換來每次打開都是最新的榜單，很划算。
-      setRecommendSongs(cached.songs)
+      setRecommendSongs(pickRecommendWindow(cached.songs, category, readRecommendSeed(category)))
       setRecommendCaption(cached.caption || '')
       setRecommendLoading(false)
       // 還在最小間隔內、而且沒跨日 → 手上這份就是該顯示的，不必再打上游
@@ -1282,8 +1329,11 @@ export function useMusicApp() {
       let supported = false
       for (const plugin of enabled) {
         try {
+          // 要一個池子而不是剛好 80 首 —— 刷新是從池子裡重洗，不是重打網路。
+          // seed 照樣傳給音源（新版音源會連上游那批也換掉），但**換批不靠它**：
+          // 舊音源忽略 seed 也沒關係，池子在 app 手上。
           const res = await pluginManager.getRecommendForPlugin(
-            plugin.name, category, RECOMMEND_LIMIT, readRecommendSeed(category),
+            plugin.name, category, RECOMMEND_POOL, readRecommendSeed(category),
           )
           if (res === null) continue  // 該插件不提供推薦
           supported = true
@@ -1294,9 +1344,10 @@ export function useMusicApp() {
           console.error(`[recommend] ${plugin.name} 失敗:`, e)
         }
       }
-      // 抓到東西才覆蓋畫面與快取。空結果不要蓋掉手上可用的舊清單
+      // 抓到東西才覆蓋畫面與快取。空結果不要蓋掉手上可用的舊清單。
+      // 存進快取的是**整個池子**，畫面顯示的是從它挑出的那 80 首。
       if (songs.length > 0) {
-        setRecommendSongs(songs)
+        setRecommendSongs(pickRecommendWindow(songs, category, readRecommendSeed(category)))
         setRecommendCaption(caption)
         writeRecommendCache(category, songs, caption)
       } else if (!cached) {
@@ -1322,10 +1373,12 @@ export function useMusicApp() {
     loadRecommend(category)
   }
 
-  /** 手動重新整理推薦：略過快取，強制抓最新 */
   /**
-   * 刷新：換一批歌，不是重抓同一批。所以先把種子加一 —— 只 force 的話會拿到
-   * 一模一樣的清單（輪替按日期算），按了像沒反應。
+   * 刷新 = 換一批歌，而且是**按下去就換**。
+   *
+   * 種子加一後，loadRecommend 會先從手上的池子重洗出另外 80 首（不打網路、
+   * 不轉圈），再順手在背景抓新池子。這樣換批不依賴音源版本也不依賴網路 ——
+   * 之前把換批交給音源（傳 seed 讓它換），舊音源直接忽略，使用者按了毫無反應。
    */
   const refreshRecommend = () => {
     bumpRecommendSeed(recommendCategory)
