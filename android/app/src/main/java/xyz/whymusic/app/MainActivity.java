@@ -134,17 +134,26 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 寫進 CSS 變數。系統第一次送 insets 過來時頁面多半還沒載好（那時注入會直接
-     * 落空、之後又不一定再送一次），所以同一組值補送幾次 —— 每次就是設兩個字串
-     * 變數，重複做不痛不癢，比漏掉一次讓按鈕被蓋住划算。
+     * 寫進 CSS 變數，**送到前端確認收到為止**。
+     *
+     * 系統送 insets 過來時頁面通常還沒載好，那時注入會直接落空；而 insets 不會
+     * 再送第二次，於是底欄就一直沒有邊距（實測：冷啟動慢的機器上，開起來按鈕
+     * 就是被導航列蓋住的，而同一支 app 熱啟動時正常 —— 只補送固定幾次不夠）。
+     * 所以這裡每半秒重送一次，直到前端回報設好了為止，最多試 30 秒。
      */
     private void applyInsetsToWeb(WebView webView, int top, int bottom) {
-        final String js = "(function(){var s=document.documentElement.style;"
+        final String js = "(function(){try{var s=document.documentElement.style;"
             + "s.setProperty('--wm-inset-top','" + top + "px');"
-            + "s.setProperty('--wm-inset-bottom','" + bottom + "px');})()";
-        android.os.Handler handler = new android.os.Handler(getMainLooper());
-        for (int delay : new int[] { 0, 500, 1500, 3000 }) {
-            handler.postDelayed(() -> webView.evaluateJavascript(js, null), delay);
-        }
+            + "s.setProperty('--wm-inset-bottom','" + bottom + "px');"
+            + "return '1';}catch(e){return '0';}})()";
+        final android.os.Handler handler = new android.os.Handler(getMainLooper());
+        final int[] tries = { 0 };
+        final Runnable[] attempt = new Runnable[1];
+        attempt[0] = () -> webView.evaluateJavascript(js, value -> {
+            boolean ok = value != null && value.contains("1");
+            if (ok || ++tries[0] > 60) return;
+            handler.postDelayed(attempt[0], 500);
+        });
+        attempt[0].run();
     }
 }

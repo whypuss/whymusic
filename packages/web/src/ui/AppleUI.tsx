@@ -20,6 +20,55 @@ import {
 } from './../musicApp'
 import { t, useLang, setLang, isAutoLang, LANGS, Lang } from './../core/i18n'
 
+/**
+ * 底欄分頁圖標。線條風、22px、stroke 用 currentColor —— 顏色跟著文字走，
+ * 選中時（藍）與未選中時（半透明白）不必各畫一套。
+ * 描邊寬度 1.6 與頁面上其他圖標一致，不會有一排特別粗或特別細的感覺。
+ */
+function TabIconNote() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <path d="M8.5 15.5V6.2l7-1.7v9" stroke="currentColor" strokeWidth="1.6"
+        strokeLinecap="round" strokeLinejoin="round" />
+      <ellipse cx="6.6" cy="15.6" rx="1.9" ry="1.7" stroke="currentColor" strokeWidth="1.6" />
+      <ellipse cx="13.6" cy="13.6" rx="1.9" ry="1.7" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+function TabIconSearch() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <circle cx="10" cy="10" r="5.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M13.9 13.9l3.4 3.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function TabIconHeart() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <path d="M11 17.2S4.2 13.3 4.2 8.9a3.4 3.4 0 0 1 6.8-1 3.4 3.4 0 0 1 6.8 1c0 4.4-6.8 8.3-6.8 8.3z"
+        stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/**
+ * 設置用調節滑桿而不是齒輪：齒輪在 22px 下畫成「圓＋八根短線」會看成亮度圖標
+ * （實機截圖確認過），而滑桿一眼就是「調東西的地方」—— 這頁放的正是音質、
+ * 語言、音源這些設定。
+ */
+function TabIconSliders() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <path d="M4 7.5h14M4 14.5h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="8.5" cy="7.5" r="2.1" stroke="currentColor" strokeWidth="1.6" fill="#1C1C1E" />
+      <circle cx="14" cy="14.5" r="2.1" stroke="currentColor" strokeWidth="1.6" fill="#1C1C1E" />
+    </svg>
+  )
+}
+
 /** iOS 風格的分段控制 */
 function Segmented<T extends string>({
   options, value, onChange,
@@ -475,10 +524,10 @@ export default function AppleUI({ app }: { app: MusicApp }) {
   }
 
   const tabs = [
-    { key: 'recommend' as const, label: t('推薦') },
-    { key: 'search' as const, label: t('搜尋') },
-    { key: 'favorites' as const, label: t('收藏') },
-    { key: 'plugins' as const, label: t('設置') },
+    { key: 'recommend' as const, label: t('推薦'), icon: <TabIconNote /> },
+    { key: 'search' as const, label: t('搜尋'), icon: <TabIconSearch /> },
+    { key: 'favorites' as const, label: t('收藏'), icon: <TabIconHeart /> },
+    { key: 'plugins' as const, label: t('設置'), icon: <TabIconSliders /> },
   ]
   // 內建與第三方音源不再分開列 —— 安裝方式統一成貼網址，區分它們沒有意義了。
   // 依 pluginKey 重算（安裝／移除／啟用都會遞增它）。
@@ -1309,9 +1358,15 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           {tabs.map(tab => (
             <button key={tab.key}
               onClick={() => setCurrentView(tab.key)}
-              className={`flex-1 py-2.5 text-[11px] font-medium transition-colors ${
+              className={`flex-1 pt-1.5 pb-2 flex flex-col items-center gap-0.5
+                          text-[11px] font-medium transition-colors ${
+                // 未選中的圖標比文字亮一階（白 70% vs 40%）—— 一排灰字上面配一排
+                // 同樣暗的圖標會整個沉下去，圖標本來就是拿來一眼認位置的
                 currentView === tab.key ? 'text-[#0A84FF]' : 'text-white/40'
               }`}>
+              <span className={currentView === tab.key ? '' : 'text-white/70'}>
+                {tab.icon}
+              </span>
               {tab.label}
             </button>
           ))}
