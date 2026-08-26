@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
         if (getBridge() != null && getBridge().getWebView() != null) {
             getBridge().getWebView().getSettings()
                 .setCacheMode(WebSettings.LOAD_NO_CACHE);
+            reportSystemBarInsets(getBridge().getWebView());
         }
 
         // 返回鍵／側滑：先問前端要不要自己吃掉這一下（歌詞頁開著時就是「縮小回
@@ -80,5 +81,70 @@ public class MainActivity extends BridgeActivity {
                 setEnabled(true);
             }
         });
+    }
+
+    /**
+     * 把系統列（導航列／狀態列）實際佔掉的高度餵給前端，存成 CSS 變數
+     * --wm-inset-top / --wm-inset-bottom。
+     *
+     * 為什麼不能只靠 CSS 的 env(safe-area-inset-*)：Android 的 WebView 只把
+     * **顯示屏缺口**（劉海、打孔）算進 safe-area，導航列不算 —— 於是三鍵導航的
+     * 手機上 env(safe-area-inset-bottom) 是 0，而 targetSdk 35 起版面又是強制
+     * 延伸到系統列底下的，結果就是虛擬按鍵直接蓋住我們最底下那排分頁按鈕。
+     * iPhone 的手勢條靠 env() 就對了，所以前端兩者取大值，兩邊都不必特判。
+     *
+     * 用 setOnApplyWindowInsetsListener 而不是開頭量一次：導航列會變（轉螢幕、
+     * 手勢／三鍵切換、鍵盤彈出），每次系統送 insets 過來就更新一次才跟得上。
+     */
+    private void reportSystemBarInsets(WebView webView) {
+        // 掛在 Activity 的內容視圖，不是 WebView —— insets 派發到 WebView 之前就被
+        // 上層吃掉了，掛在它身上那個 listener 一次都不會觸發（實測：完全沒有日誌）。
+        // 回傳原本的 insets，不消耗，免得影響其他視圖。
+        android.view.View root = findViewById(android.R.id.content);
+        if (root == null) return;
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            pushInsets(webView, insets);
+            return insets;
+        });
+        // 再直接讀一次現值：掛上 listener 之前系統早就派發過了，只等下一次派發的話
+        // 開 app 的第一眼還是被蓋住的。
+        root.post(() -> pushInsets(webView, androidx.core.view.ViewCompat.getRootWindowInsets(root)));
+    }
+
+    /** onResume 也讀一次：使用者可能在背景時切了導航方式（手勢 ↔ 三鍵） */
+    @Override
+    public void onResume() {
+        super.onResume();
+        android.view.View root = findViewById(android.R.id.content);
+        WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+        if (root != null && webView != null) {
+            root.post(() -> pushInsets(webView, androidx.core.view.ViewCompat.getRootWindowInsets(root)));
+        }
+    }
+
+    /** 取系統列高度（px → CSS px）並寫進前端 */
+    private void pushInsets(WebView webView, androidx.core.view.WindowInsetsCompat insets) {
+        if (insets == null) return;
+        androidx.core.graphics.Insets bars = insets.getInsets(
+            androidx.core.view.WindowInsetsCompat.Type.systemBars());
+        float density = getResources().getDisplayMetrics().density;
+        if (density <= 0) density = 1f;
+        applyInsetsToWeb(webView,
+            Math.round(bars.top / density), Math.round(bars.bottom / density));
+    }
+
+    /**
+     * 寫進 CSS 變數。系統第一次送 insets 過來時頁面多半還沒載好（那時注入會直接
+     * 落空、之後又不一定再送一次），所以同一組值補送幾次 —— 每次就是設兩個字串
+     * 變數，重複做不痛不癢，比漏掉一次讓按鈕被蓋住划算。
+     */
+    private void applyInsetsToWeb(WebView webView, int top, int bottom) {
+        final String js = "(function(){var s=document.documentElement.style;"
+            + "s.setProperty('--wm-inset-top','" + top + "px');"
+            + "s.setProperty('--wm-inset-bottom','" + bottom + "px');})()";
+        android.os.Handler handler = new android.os.Handler(getMainLooper());
+        for (int delay : new int[] { 0, 500, 1500, 3000 }) {
+            handler.postDelayed(() -> webView.evaluateJavascript(js, null), delay);
+        }
     }
 }

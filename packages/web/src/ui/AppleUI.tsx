@@ -95,8 +95,8 @@ function LyricsSheet({
   return (
     <div className="fixed inset-0 z-[60] bg-black flex flex-col"
       style={{
-        paddingTop: 'env(safe-area-inset-top, 0px)',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingTop: 'max(env(safe-area-inset-top, 0px), var(--wm-inset-top, 0px))',
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--wm-inset-bottom, 0px))',
       }}>
       {/* 標題列：關閉在左（iOS 的向下箭頭＝收起），複製在右 */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 h-12">
@@ -505,7 +505,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
       {/* 頂部標題列。毛玻璃 + 安全區內距，內容捲動時仍可見 */}
       <header
         className="flex-shrink-0 border-b border-white/[0.08] bg-black/70 backdrop-blur-xl"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), var(--wm-inset-top, 0px))' }}
       >
         <div className="max-w-2xl mx-auto px-4 h-11 flex items-center gap-2">
           <img
@@ -1213,7 +1213,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
       {/* ── 播放器：毛玻璃底欄 ── */}
       <div
         className="flex-shrink-0 border-t border-white/[0.08] bg-[#1C1C1E]/80 backdrop-blur-2xl"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--wm-inset-bottom, 0px))' }}
       >
         <div className="max-w-2xl mx-auto px-4 pt-3 pb-2">
           {/*
