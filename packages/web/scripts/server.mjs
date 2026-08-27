@@ -16,6 +16,7 @@ import { execSync } from 'node:child_process'
 import { gzip as gzipCb } from 'node:zlib'
 import { promisify } from 'node:util'
 import { lookup as dnsLookup } from 'node:dns/promises'
+import { createWebdavHandler } from './webdav.mjs'
 import {
   SYNC_CODE_LEN,
   SYNC_MAX_BYTES,
@@ -1227,9 +1228,40 @@ async function serveStatic(res, filePath, extraHeaders) {
 // 就把這台標記為不健康、停止導流進來。宣告在此以便 request handler 讀得到。
 let shuttingDown = false
 
+/**
+ * WebDAV 門面（/dav）。給只吃 WebDAV 的播放器用（iOS 的 Everplay、Evermusic
+ * 之類）—— 它們裝不了我們的音源插件，也不認我們的 API。
+ *
+ * **沒設 WEBDAV_USER/WEBDAV_PASS 就整條路關閉**：這服務常跑在公開 IP 上，
+ * 不設密碼等於開一個誰都能用的音樂代理，遲早被拿去刷流量、害本機 IP 被上游封。
+ */
+const handleWebdav = createWebdavHandler({
+  user: process.env.WEBDAV_USER,
+  pass: process.env.WEBDAV_PASS,
+  bitrate: Number(process.env.WEBDAV_BITRATE) || 320,
+  recommend: (category, limit) => recommendWhyMusic(category, limit),
+  resolveUrl: (opts) => resolveWhyMusicUrl(opts),
+  getLyric: (lyricId, source) => getWhyMusicLyric(lyricId, source),
+})
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const pathname = url.pathname
+
+  // WebDAV 要放在 CORS preflight 之前：它自己的 OPTIONS 是「自我介紹」
+  // （回 DAV 標頭），被當成瀏覽器的預檢回 204 就等於告訴播放器「這裡不是 WebDAV」
+  if (pathname === '/dav' || pathname.startsWith('/dav/')) {
+    try {
+      if (await handleWebdav(req, res, pathname)) return
+    } catch (err) {
+      console.error('[dav] 未預期錯誤:', err.message)
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
+      }
+      res.end('WebDAV 內部錯誤')
+      return
+    }
+  }
 
   // CORS preflight
   if (req.method === 'OPTIONS') {
