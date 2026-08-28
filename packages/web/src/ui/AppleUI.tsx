@@ -79,7 +79,9 @@ function Segmented<T extends string>({
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
-          className={`px-4 py-1.5 text-[13px] font-medium rounded-[8px] transition-all ${
+          // px-3 而不是 px-4：推薦頁那列現在還要並排一顆刷新按鈕，五個標籤各省
+          // 8px 才擠得下（擠不下時整列可以橫捲，但一眼看不到全部就不好用了）
+          className={`px-3 py-1.5 text-[13px] font-medium rounded-[8px] transition-all ${
             value === o.value
               ? 'bg-white/95 text-black shadow-sm'
               : 'text-white/60 hover:text-white/90'
@@ -652,29 +654,37 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   </div>
                 </div>
               )}
-              <div className="px-4 pt-5 pb-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    {/*
-                      這裡原本有「推薦」大標題，使用者要求拿掉 —— 底欄分頁已經標了
-                      這是哪一頁，再放一次只是重複，還把最近播放那排往下擠。
-                      副標留著：它是**音源回報**的來源說明（app 不知道任何音源用了
-                      什麼榜單），沒給就不顯示這一行。
-                    */}
-                    {recommendCaption && (
-                      <p className="text-[15px] text-white/45">{recommendCaption}</p>
-                    )}
+              {/*
+                分類標籤與重新整理**同一列**。原本刷新孤零零掛在右上角、標籤在下一列，
+                中間還隔著一段空白，看起來像兩個不相干的東西。並排之後這一列就是
+                「選哪個榜、或重抓一次」，語意也對上了。
+                pt-3：把整塊往上收，貼近最近播放那排（原本 pt-5 中間空一大截）。
+              */}
+              <div className="px-4 pt-3 pb-3">
+                <div className="flex items-center gap-2">
+                  {/*
+                    標籤列吃掉剩下的寬度並可內部橫捲：五個標籤加一顆按鈕在窄螢幕
+                    會擠，min-w-0 + overflow-x-auto 讓它自己捲，絕不把整頁撐寬，
+                    也不會把刷新按鈕擠出畫面。
+                  */}
+                  <div className="flex-1 min-w-0 overflow-x-auto scrollbar-none">
+                    <Segmented
+                      value={recommendCategory}
+                      onChange={c => switchRecommendCategory(c)}
+                      options={RECOMMEND_CATEGORIES.map(c => ({ value: c.value, label: t(c.label) }))}
+                    />
                   </div>
                   {/*
                     重新整理。有了快取之後這個按鈕才有存在必要 —— 清單可能是幾小時前
                     存下來的，使用者想看最新的得有辦法強制重抓。
+                    尺寸配合標籤列高度（34px），並排才不會一高一低。
                   */}
                   <button onClick={refreshRecommend} disabled={recommendLoading}
                     title={t('重新整理')} aria-label={t('重新整理')}
-                    className="mt-2 w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0
-                               text-white/45 hover:text-white hover:bg-white/10 active:opacity-60
+                    className="w-[34px] h-[34px] rounded-full flex items-center justify-center flex-shrink-0
+                               bg-white/10 text-white/60 hover:text-white active:opacity-60
                                disabled:opacity-30 transition">
-                    <svg width="17" height="17" viewBox="0 0 16 16" fill="none"
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
                       className={recommendLoading ? 'animate-spin' : ''}>
                       <path d="M14 8a6 6 0 1 1-1.76-4.24M14 2v4h-4" stroke="currentColor"
                         strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -682,17 +692,13 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   </button>
                 </div>
                 {/*
-                  一排五個標籤，一個分類一份榜單。沒有第二個軸。
-                  overflow-x-auto 是保險：標籤文字依語言長短不一（各語言已用縮寫），
-                  萬一仍放不下，只在這一列內部滾動，絕不把整頁撐寬。
+                  來源說明移到標籤下面，字級縮小：它是**音源回報**的註記（app 不知道
+                  任何音源用了什麼榜單），是說明而不是標題，不該比標籤還搶眼。
+                  沒給就不顯示這一行。
                 */}
-                <div className="mt-4 overflow-x-auto">
-                  <Segmented
-                    value={recommendCategory}
-                    onChange={c => switchRecommendCategory(c)}
-                    options={RECOMMEND_CATEGORIES.map(c => ({ value: c.value, label: t(c.label) }))}
-                  />
-                </div>
+                {recommendCaption && (
+                  <p className="mt-2 text-[12px] text-white/35 truncate">{recommendCaption}</p>
+                )}
               </div>
               {recommendLoading && recommendSongs.length === 0 && <EmptyState text={t('載入中…')} />}
               {!recommendLoading && recommendSongs.length === 0 && (
@@ -1298,12 +1304,32 @@ export default function AppleUI({ app }: { app: MusicApp }) {
         onNext={playNext}
       />
 
-      {/* ── 播放器：毛玻璃底欄 ── */}
-      <div
-        className="flex-shrink-0 border-t border-white/[0.08] bg-[#1C1C1E]/80 backdrop-blur-2xl"
-        style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--wm-inset-bottom, 0px))' }}
-      >
-        <div className="max-w-2xl mx-auto px-4 pt-3 pb-2">
+      {/*
+        ── 播放器：漂浮的液態玻璃卡片 ──
+        原本是貼著底、有上邊框的一整條，看起來像被釘死的工具列。改成離開邊緣、
+        四角大圓角的卡片，內容從它底下透出來，才有「浮在上面」的感覺。
+        做法：
+          - 外層只負責留白（左右與底部），不畫任何東西，滑鼠事件穿透（pointer-events-none）
+            讓卡片以外的區域仍能點到清單
+          - 卡片本身半透明 + backdrop-blur + 內外兩層淡邊框：外框描出玻璃的邊緣、
+            內側 inset 高光模擬光線在玻璃厚度上的折射，這是「液態玻璃」的關鍵，
+            少了它只是一塊灰色半透明方塊
+        底部安全區的邊距加在外層 padding 上，卡片就會浮在導航列上方而不是被它壓住。
+      */}
+      <div className="flex-shrink-0">
+        {/* 浮起來的留白。只有卡片本身接收點擊，卡片外的空白讓下面的清單收得到 */}
+        <div className="pointer-events-none px-3 pb-2">
+        <div
+          className="pointer-events-auto max-w-2xl mx-auto px-4 pt-3 pb-2
+                     rounded-[22px] border border-white/[0.14]
+                     bg-white/[0.06] backdrop-blur-2xl backdrop-saturate-150
+                     shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
+          style={{
+            // inset 高光：上緣亮一點、下緣暗一點，看起來像有厚度的玻璃而不是貼紙
+            boxShadow: '0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.18),'
+              + ' inset 0 -1px 0 rgba(0,0,0,0.25)',
+          }}
+        >
           {/*
             曲目資訊整塊可點 → 打開歌詞頁（Apple Music／Spotify 都是點迷你播放器
             展開）。沒有在播的東西時不可點 —— 那時沒有歌詞可看。
@@ -1392,8 +1418,14 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           </div>
         </div>
 
-        {/* 分頁 */}
-        <div className="flex border-t border-white/[0.08]">
+        </div>
+
+        {/*
+          分頁列留在最底、貼著邊 —— 它是導覽，位置固定才好用拇指盲按；
+          浮起來的是播放器。底部安全區的邊距加在這裡（見 v1.10.7 的註解）。
+        */}
+        <div className="flex border-t border-white/[0.08] bg-black/40 backdrop-blur-xl"
+          style={{ paddingBottom: 'max(env(safe-area-inset-bottom, 0px), var(--wm-inset-bottom, 0px))' }}>
           {tabs.map(tab => (
             <button key={tab.key}
               onClick={() => setCurrentView(tab.key)}
