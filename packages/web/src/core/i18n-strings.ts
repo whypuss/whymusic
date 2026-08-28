@@ -9,6 +9,7 @@ import type { Lang } from './i18n'
 type Dict = Record<string, string>
 
 const zhHans: Dict = {
+  '隨便聽聽': '随便听听',
   '最近播放': '最近播放',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': '当前的音源不支持专辑搜索。请到“设置”页移除音源后重新安装一次。',
   '歌曲': '歌曲',
@@ -171,6 +172,7 @@ const zhHans: Dict = {
 }
 
 const en: Dict = {
+  '隨便聽聽': 'Something to play',
   '最近播放': 'Recently played',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'Your installed source does not support album search. Remove and reinstall it in Settings.',
   '歌曲': 'Songs',
@@ -333,6 +335,7 @@ const en: Dict = {
 }
 
 const ja: Dict = {
+  '隨便聽聽': 'ちょっと聴く',
   '最近播放': '最近再生した曲',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'この音源はアルバム検索に対応していません。「設定」で音源を削除して再インストールしてください。',
   '歌曲': '曲',
@@ -495,6 +498,7 @@ const ja: Dict = {
 }
 
 const ko: Dict = {
+  '隨便聽聽': '가볍게 듣기',
   '最近播放': '최근 재생',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': '현재 음원은 앨범 검색을 지원하지 않습니다. 설정에서 음원을 제거한 뒤 다시 설치하세요.',
   '歌曲': '곡',
@@ -657,6 +661,7 @@ const ko: Dict = {
 }
 
 const ru: Dict = {
+  '隨便聽聽': 'Просто послушать',
   '最近播放': 'Недавно играло',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'Установленный источник не поддерживает поиск альбомов. Удалите и переустановите его в настройках.',
   '歌曲': 'Треки',
@@ -819,6 +824,7 @@ const ru: Dict = {
 }
 
 const es: Dict = {
+  '隨便聽聽': 'Para escuchar',
   '最近播放': 'Reproducido reciente',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'La fuente instalada no admite búsqueda de álbumes. Quítala y vuelve a instalarla en Ajustes.',
   '歌曲': 'Canciones',
@@ -981,6 +987,7 @@ const es: Dict = {
 }
 
 const pt: Dict = {
+  '隨便聽聽': 'Para ouvir',
   '最近播放': 'Tocadas recentemente',
   '目前的音源不支援專輯搜尋。請到「設置」頁移除音源後重新安裝一次。': 'A fonte instalada não suporta busca de álbuns. Remova-a e reinstale em Ajustes.',
   '歌曲': 'Músicas',

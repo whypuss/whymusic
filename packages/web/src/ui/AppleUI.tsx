@@ -469,7 +469,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
     recommendLoading, recommendSongs, recommendUnsupported, removePlugin,
     results, search,
-    quality, recentSongs, recommendCaption, refreshRecommend, removeDownload, searchType, seekTo,
+    quality, recentSongs, showcaseSongs, recommendCaption, refreshRecommend, removeDownload, searchType, seekTo,
     serverVersion,
     setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
@@ -620,10 +620,11 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                 app 最常想做的事是「接著剛剛那首」，不該逼他回榜單裡重找。
                 沒播過任何東西時整塊不顯示，免得新使用者看到一排空格。
               */}
-              {recentSongs.length > 0 && (
+              {showcaseSongs.length > 0 && (
                 <div className="pt-4">
+                  {/* 沒播過任何東西時放的是隨機粵語推薦，標題就不能寫「最近播放」*/}
                   <h2 className="px-4 pb-2 text-[13px] font-semibold text-white/45">
-                    {t('最近播放')}
+                    {recentSongs.length > 0 ? t('最近播放') : t('隨便聽聽')}
                   </h2>
                   {/*
                     overflow-x-auto + snap：手指左右拖就能捲，放開會對齊到方塊邊緣。
@@ -631,7 +632,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
                   */}
                   <div className="flex gap-3 overflow-x-auto scrollbar-none snap-x snap-mandatory
                                   px-4 pb-1">
-                    {recentSongs.map((song, i) => (
+                    {showcaseSongs.map((song, i) => (
                       <button
                         key={`${song.platform}-${song.id}-${i}`}
                         onClick={() => playAndShowLyrics(song)}

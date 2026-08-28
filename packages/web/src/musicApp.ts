@@ -525,6 +525,12 @@ export function useMusicApp() {
     })
   }, [])
 
+  /**
+   * 這一輪的隨機種子。沒有最近播放時，上面那排改放隨機粵語推薦 —— 種子固定在
+   * 「這次開 app」，所以同一輪不會在眼皮底下換人，下次開才是另一批。
+   */
+  const showcaseSeedRef = useRef(Math.floor(Math.random() * 1e9))
+
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
@@ -579,6 +585,21 @@ export function useMusicApp() {
       : DEFAULT_RECOMMEND_CATEGORY
   })
   const [recommendSongs, setRecommendSongs] = useState<MusicItem[]>([])
+
+  /**
+   * 推薦頁最上面那排要顯示什麼。
+   *   有最近播放 → 就放最近播放
+   *   沒有（全新安裝、剛清過資料）→ 隨機挑一批粵語推薦頂上
+   * 不然新使用者第一次開 app，上面會是一塊空白 —— 那是最需要給東西看的時候。
+   * 粵語是預設分類，它的池子通常已經在快取裡，所以這批是現成的、不必多打網路；
+   * 真的沒有才退回目前這個分類的清單。
+   */
+  const showcaseSongs = useMemo(() => {
+    if (recentSongs.length > 0) return recentSongs.slice(0, RECENT_LIMIT)
+    const pool = readRecommendCache('cantonese')?.songs || recommendSongs
+    if (!pool?.length) return []
+    return pickRecommendWindow(pool, `showcase:${showcaseSeedRef.current}`, 0, RECENT_LIMIT)
+  }, [recentSongs, recommendSongs])
   /**
    * 目前這批推薦的來源說明，由音源回報（見插件的 getRecommend）。
    * app 自己不知道任何音源用了什麼榜單，所以音源沒給就不顯示。
@@ -1872,6 +1893,7 @@ export function useMusicApp() {
     createSyncCode,
     favorites,
     recentSongs,
+    showcaseSongs,
     exportDownload,
     exportFavorites,
     importFavorites,
