@@ -469,7 +469,7 @@ export default function AppleUI({ app }: { app: MusicApp }) {
     pluginError, pluginKey, pluginName, pluginToggles, pluginUrl, recommendCategory,
     recommendLoading, recommendSongs, recommendUnsupported, removePlugin,
     results, search,
-    quality, recommendCaption, refreshRecommend, removeDownload, searchType, seekTo,
+    quality, recentSongs, recommendCaption, refreshRecommend, removeDownload, searchType, seekTo,
     serverVersion,
     setCurrentView, setQuality, setKeyword, setLockedItem, setPluginName, setPluginUrl,
     setImportText, setSearchPage, setSearchType, setSyncInput, switchRecommendCategory,
@@ -556,13 +556,14 @@ export default function AppleUI({ app }: { app: MusicApp }) {
         className="flex-shrink-0 border-b border-white/[0.08] bg-black/70 backdrop-blur-xl"
         style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), var(--wm-inset-top, 0px))' }}
       >
-        <div className="max-w-2xl mx-auto px-4 h-11 flex items-center gap-2">
+        {/* logo 與站名放大 1.5 倍（22→33px、16→24px），列高跟著加大才不會被裁掉 */}
+        <div className="max-w-2xl mx-auto px-4 h-[62px] flex items-center gap-3">
           <img
             src="/logo.png"
             alt="W"
-            className="w-[22px] h-[22px] rounded-[6px] object-cover"
+            className="w-[33px] h-[33px] rounded-[9px] object-cover"
           />
-          <span className="text-[16px] font-semibold tracking-tight">WhyMusic</span>
+          <span className="text-[24px] font-semibold tracking-tight">WhyMusic</span>
         </div>
       </header>
       {/* 通知：iOS 風格的浮動膠囊 */}
@@ -614,16 +615,53 @@ export default function AppleUI({ app }: { app: MusicApp }) {
           {/* ── 推薦 ── */}
           {currentView === 'recommend' && (
             <>
-              <div className="px-4 pt-8 pb-4">
+              {/*
+                最近播放：橫向捲動的方塊。放在最上面而不是清單裡 —— 使用者回到
+                app 最常想做的事是「接著剛剛那首」，不該逼他回榜單裡重找。
+                沒播過任何東西時整塊不顯示，免得新使用者看到一排空格。
+              */}
+              {recentSongs.length > 0 && (
+                <div className="pt-4">
+                  <h2 className="px-4 pb-2 text-[13px] font-semibold text-white/45">
+                    {t('最近播放')}
+                  </h2>
+                  {/*
+                    overflow-x-auto + snap：手指左右拖就能捲，放開會對齊到方塊邊緣。
+                    scrollbar-none 讓桌面瀏覽器不顯示捲軸（手機本來就沒有）。
+                  */}
+                  <div className="flex gap-3 overflow-x-auto scrollbar-none snap-x snap-mandatory
+                                  px-4 pb-1">
+                    {recentSongs.map((song, i) => (
+                      <button
+                        key={`${song.platform}-${song.id}-${i}`}
+                        onClick={() => playAndShowLyrics(song)}
+                        className="flex-shrink-0 w-[108px] snap-start text-left active:opacity-70 transition"
+                      >
+                        <div className="w-[108px] h-[108px] rounded-[12px] overflow-hidden
+                                        bg-white/[0.07] flex items-center justify-center">
+                          {song.artwork
+                            ? <img src={song.artwork} alt="" loading="lazy"
+                                className="w-full h-full object-cover" />
+                            : <span className="text-[26px] text-white/25">♪</span>}
+                        </div>
+                        <div className="mt-1.5 text-[12px] leading-tight truncate">{song.title}</div>
+                        <div className="text-[11px] text-white/40 truncate">{song.artist}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="px-4 pt-5 pb-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h1 className="text-[34px] font-bold tracking-tight leading-tight">{t('推薦')}</h1>
                     {/*
-                      副標是**音源回報**的來源說明，不是 app 寫死的 —— app 不知道
-                      任何音源用了什麼榜單。音源沒給說明就不顯示這一行。
+                      這裡原本有「推薦」大標題，使用者要求拿掉 —— 底欄分頁已經標了
+                      這是哪一頁，再放一次只是重複，還把最近播放那排往下擠。
+                      副標留著：它是**音源回報**的來源說明（app 不知道任何音源用了
+                      什麼榜單），沒給就不顯示這一行。
                     */}
                     {recommendCaption && (
-                      <p className="text-[15px] text-white/45 mt-0.5">{recommendCaption}</p>
+                      <p className="text-[15px] text-white/45">{recommendCaption}</p>
                     )}
                   </div>
                   {/*

@@ -43,3 +43,16 @@ body {
     animation: none;
   }
 }
+
+/*
+ * 橫向捲動列不顯示捲軸。手機本來就沒有捲軸，但桌面瀏覽器會在最近播放那排
+ * 底下畫一條，把方塊下面的歌名擠掉。捲動本身照常（用手指／觸控板／滑鼠拖）。
+ */
+.scrollbar-none {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* 舊 Edge */
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;                  /* Chrome / Safari / WebView */
+}

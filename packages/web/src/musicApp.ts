@@ -41,6 +41,14 @@ const STORAGE_CODES = 'musicfree-plugin-codes'
 const STORAGE_PLUGINS = 'musicfree-plugins'
 const STORAGE_PLAY_MODE = 'musicfree-play-mode'
 const STORAGE_FAVORITES = 'musicfree-favorites'
+/**
+ * 最近播放。推薦頁最上面那排方塊就是它 —— 使用者要回到剛剛在聽的東西，
+ * 不該回去榜單裡重新找一次。只存 app 已經有的欄位（標題／歌手／封面／id），
+ * 不多存任何東西，所以離線也能顯示、點下去照樣能播（播放位址是當下才解析的）。
+ */
+const STORAGE_RECENT = 'whymusic-recent'
+/** 留幾首。畫面上是一排橫捲的方塊，20 首捲起來剛好，再多只是佔 localStorage */
+const RECENT_LIMIT = 20
 const STORAGE_RECOMMEND_CAT = 'musicfree-recommend-category'
 const STORAGE_QUALITY = 'musicfree-quality'
 
@@ -490,6 +498,33 @@ export function useMusicApp() {
       return []
     }
   })
+  /** 最近播放（新到舊）。同一首再播會被移到最前面而不是重複一筆 */
+  const [recentSongs, setRecentSongs] = useState<MusicItem[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_RECENT) || '[]')
+      return Array.isArray(raw) ? raw.slice(0, RECENT_LIMIT) : []
+    } catch {
+      return []
+    }
+  })
+  /**
+   * 記一筆最近播放。在「開始播這首」時就記，而不是等播成功 —— 使用者的認知是
+   * 「我點了它」，就算那首當下解析失敗，回頭在最近播放裡再點一次也合理。
+   * 同一首重播是移到最前面，不是多一筆。
+   */
+  const pushRecent = useCallback((item: MusicItem) => {
+    if (!item?.id) return
+    setRecentSongs(prev => {
+      const key = `${item.platform || ''}:${item.id}`
+      const next = [item, ...prev.filter(s => `${s.platform || ''}:${s.id}` !== key)]
+        .slice(0, RECENT_LIMIT)
+      try {
+        localStorage.setItem(STORAGE_RECENT, JSON.stringify(next))
+      } catch { /* 存不進去也無妨，這輪還是看得到 */ }
+      return next
+    })
+  }, [])
+
   const [isPlaying, setIsPlaying] = useState(false)
   const [pluginToggles, setPluginToggles] = useState<Record<string, boolean>>({})
   const [pluginKey, setPluginKey] = useState(0)
@@ -1133,6 +1168,7 @@ export function useMusicApp() {
     }
     setPlayingItem(item)
     playingItemRef.current = item
+    pushRecent(item)
     // 這次實際用的是哪個子源。要在 catch 裡讀，所以宣告在 try 外面
     let usedSource: string | undefined
     try {
@@ -1835,6 +1871,7 @@ export function useMusicApp() {
     applySyncCode,
     createSyncCode,
     favorites,
+    recentSongs,
     exportDownload,
     exportFavorites,
     importFavorites,
