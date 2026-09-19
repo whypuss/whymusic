@@ -1,242 +1,155 @@
-# WhyMusic
+<div align="center">
 
-用瀏覽器聽歌。搜尋、播放、收藏、下載，不用裝 App。
+# 🎵 WhyMusic
 
-部署步驟 → [DEPLOY.md](DEPLOY.md) ｜ 現成的部署包 → [Releases](../../releases)
+**極簡、現代、純瀏覽器運行的無損串流音樂播放器**  
+無需安裝 App，即開即用。搜尋、播放、收藏、下載、歌單同步一站式體驗。
 
-## 這是什麼
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-CSS-38B2AC?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![Cloudflare Pages](https://img.shields.io/badge/Deploy-Cloudflare%20Pages-F38020?style=flat-square&logo=cloudflare&logoColor=white)](https://pages.cloudflare.com/)
+[![PWA Ready](https://img.shields.io/badge/PWA-Ready-5A0FC8?style=flat-square&logo=pwa&logoColor=white)](https://web.dev/progressive-web-apps/)
 
-一個跑在瀏覽器裡的音樂播放器。播放器與音源徹底分開：前端不認識任何音源，只透過
-一層插件介面問「給我一個可播的 URL」，音源自己去處理搜尋、扇出、救援、簽名。
+[繁體中文](README.md) • [English](README_EN.md) • [简体中文](README_ZH.md) • [日本語](README_JA.md)
 
-**app 出廠不帶任何音源** —— 開啟後要到「設置」頁貼上網址安裝，才能搜尋與播放。
-這是刻意的（見下）。
+</div>
 
-插件是一支 CommonJS 檔案，`module.exports` 出幾個方法就是一個音源；載入時跑在
-`new Function` 的沙箱裡。**這個 repo 不含任何音源** —— 音源由使用者自己提供。
+---
 
-沙箱刻意很小：只給 `fetch`、計時器、`URL`、`btoa`/`atob` 與 `console`，沒有 `window`、
-沒有 `document`、沒有 `localStorage`，也**不提供任何 npm 模組** —— 插件要什麼自己用
-原生 `fetch` 去拿，需要跨域代抓時打 `/api/proxy?url=<目標>`。要求模組會直接拋錯並
-說明原因，而不是回一個空物件讓插件在後面某處莫名炸掉。
+## 🌟 這是什麼？
 
-## 音源
+**WhyMusic** 是一個直接運行於現代瀏覽器中的高性能音樂播放器。本專案核心理念是**「播放器核心與音源架構徹底解耦」**：
 
-### WhyMusic（內建，需自行安裝）
+- **出廠純淨零音源（Zero Built-in Sources）**：專案本身不攜帶、不託管、不提供任何版權音訊檔案或第三方音源接口。前端不認識任何音樂平台，僅透過一層標準化插件介面詢問：「請給我一個可播放的 URL」。
+- **極致安全微沙箱（Micro Sandbox）**：使用者自行提供的插件為標準 CommonJS 規範，於瀏覽器端受控的 `new Function` 沙箱中隔離運行。沙箱嚴格限制權限（僅開放 `fetch`、定時器、`URL`、`btoa/atob` 與 `console`），徹底阻斷對 `window`、`document` 與敏感儲存區的直接存取。
+- **手機背景持久播放（Dual-Audio Buffering）**：獨創**雙 Audio 元素雙緩衝輪替機制**，徹底攻克 iOS Safari 與 Android 瀏覽器在後台/鎖定畫面切換 URL 時 Session 被中斷暫停的頑疾。
 
-對外是一個音源，底下並發扇出到兩個子音源後交錯合併、同名同歌手去重：
+---
 
-| 子音源 | 覆蓋範圍 |
-|--------|----------|
-| `netease` | 簡體華語曲庫最完整，附歌詞與封面 |
-| `joox` | 港台繁體、粵語與 live 版本多 |
+## ✨ 核心亮點
 
-兩者都經一個公開 API 取得，**由瀏覽器直連**、不經本站後端。這樣上游的 IP 限流是
-各使用者各自計算，而不是全站共用一個出口；音源也因此不依賴任何特定後端，同一支
-插件貼到任何一份 whymusic 都能用。上游位址寫在音源檔裡，換一家
-只要改那支檔案。
+### 1. 雙 Audio 元素無縫輪替（攻克鎖屏斷播）
+- 瀏覽器在背景切換音訊 `src` 會導致音訊工作階段失效，這正是手機鎖屏播放容易斷音的元兇。
+- WhyMusic 在前台預先將下一首歌載入閒置的 Audio 元素，切換曲目時直接觸發已就緒元素的 `play()`，不中斷網路與音訊通道。
+- 完整介接系統級 **MediaSession API**：鎖定畫面、控制中心、下拉通知列、耳機線控（上一首/下一首/暫停/播放/快進）全功能支援，並動態呈現高畫質專輯封面與即時歌詞。
 
-**跨子源救援**：單一子源取不到音源時，會用歌名+歌手到其餘子源找同一首歌。比對前
-做繁簡歸一化，所以查「浮誇」也能命中簡體源的「浮夸」。
+### 2. 跨子源自動救援與繁簡智慧歸一化
+- 插件支援並發扇出與多子源聚合，同名同歌手智慧去重。
+- **繁簡歸一化**：搜尋時自動轉化，查詢繁體「浮誇」能無縫匹配簡體源「浮夸」。
+- **動態播放救援**：當某一子源給出的 URL 在特定地區被 CDN 403 阻擋或格式不支援時，播放器會自動將該子源標記並回退重試其他可用子源。
 
-**播不出來時換子源**：音源給了 URL 但瀏覽器實際播不出來（CDN 對該地區回 403、
-容器格式不支援…）時，前端會把該子源排除後請音源換一個再試同一首歌。這種失敗
-只有播放端知道 —— 音源那邊只知道「解析成功」。
+### 3. Apple 現代質感 UI
+- 預設採用簡約克制的 Apple 深色質感介面：大字級標題、精緻半透明毛玻璃底欄（Frosted Glass Dock）、浮動播放卡片與流暢轉場。
+- 支援動態歌詞（點擊封面展開全螢幕歌詞滾動）。
 
-### 安裝與更新
+### 4. 歌單管理與無帳號換機同步
+- **無依賴 Markdown 匯入/匯出**：歌單可一鍵匯出為通用的 Markdown 文本，任何文字編輯器均可閱讀；尾端內嵌隱藏版 JSON 標記，在任何 WhyMusic 實例重新匯入即可 100% 精準還原歌曲 ID 與指定子源。
+- **純文字清單辨識**：支援貼上任意「歌名 - 歌手」純文字清單（上限 200 首），系統自動解析比對。
+- **無帳號 8 碼換機配對**：產生 24 小時有效配對碼，另一台裝置輸入即可自動同步已安裝的音源插件，不儲存任何使用者個人隱私。
 
-**這個專案不隨附音源，產物與 repo 裡都沒有任何音源檔。** 安裝方式只有一種：
-到「設置」頁貼上你自己的音源網址。那個網址要能被瀏覽器抓到（同源、或對方送 CORS
-標頭）。
+### 5. 唯讀 WebDAV 串流門面
+- 內建符合 RFC 4918 規範的唯讀 WebDAV 服務（`/dav`）。
+- 可直接掛載至 iOS 原生播放器（如 **Everplay**、**Evermusic**），將線上曲庫與推薦榜單模擬為本地音樂資料夾與 `.lrc` 歌詞外掛，即使在無瀏覽器環境也能享受串流。
 
-安裝時會把程式碼整份存進瀏覽器的 localStorage，之後執行時不再向外抓 —— 換句話說
-裝完就與那個網址無關了。代價是它不會自動更新：音源改版後要在「設置」頁重新貼一次。
+---
 
-改音源邏輯不必改前端程式碼。第三方插件同樣是貼網址安裝；外部網址由後端經
-`/api/proxy` 代抓，你的瀏覽器不必連得到那個託管站。
-
-## 播放器與音源完全分離
-
-前端不直接呼叫任何音源 API，全部經插件介面：
-
-| 功能 | 插件方法 |
-|------|----------|
-| 搜尋（歌曲） | `search(query, page, type)` |
-| 推薦 | `getRecommend(mode, limit)` — 本專案擴充的方法 |
-| 播放 / 下載 | `getMediaSource(item)` |
-| 歌詞 / 封面 | `getLyric` / `getMusicArtwork` |
-
-`play()` 裡沒有任何平台名稱的判斷 —— 它只問音源要一個可播的 URL 然後播。要不要
-跨源救援、要不要簽名、音質怎麼選，全是插件的事，**加新音源不必改前端**。
-
-因此沒裝音源時整個 app 沒有內容：推薦與搜尋都顯示「需要音源」。插件未實作某個
-方法時回 `null`，UI 會明確說「此音源不支援」，而不是顯示空清單讓人以為壞了。
-
-前端剩下的兩個 `/api/` 呼叫都不是音源 API：`/api/proxy`（跨域代抓）與
-沒有任何供應音源的端點 —— 音源不由本站提供。
-
-## 收藏與歌單
-
-曲目右邊的心心加入收藏，「收藏」頁列出全部並**依序播放** —— 那是自己一首一首挑
-出來的清單，順序有意義。
-
-收藏存在瀏覽器本機（localStorage），所以綁裝置。要搬到別處有兩條路：
-
-**匯出 / 匯入歌單**（「設置」→ 歌單）。匯出成 Markdown：
-
-```markdown
-# WhyMusic 收藏
-
-匯出時間：2026-08-19 12:49
-共 2 首
-
-1. 月亮代表我 — moon tang
-2. 等一等 — The Hertz
-```
-
-任何文字編輯器、筆記軟體、聊天視窗都打得開。檔尾另藏一段 HTML 註解裡的 JSON ——
-Markdown 算繪時看不見，但匯入本站時能精確還原（含 id 與子音源），不必逐首重新搜尋。
-
-匯入也吃**任何純文字清單**（一行一首「歌名 - 歌手」），會逐首用音源搜尋比對，
-找不到的會明確列出來。分隔符接受破折號、連字號、tab 與 `by`，編號和項目符號會自動
-剝掉，上限 200 行。
-
-**換裝置同步**（「設置」→ 換裝置）。產生一組 8 碼配對碼，另一台裝置輸入即可套用
-目前安裝的音源，24 小時後失效。沒有帳號也不存任何個人資料。只同步音源，收藏請用
-歌單匯出。
-
-需要後端有儲存（CF 用 KV、自架用檔案系統），沒有就整區隱藏。
-
-## 推薦頁
-
-香港粵語流行榜，兩種排序：**最新**（榜單原順序）與**熱門**（依熱度，同熱度以發行
-時間新者優先）。分類對應哪份榜單由音源決定並自報，前端不寫死。
-
-## 播放模式
-
-播放器上的按鈕循環切換三種模式，選擇記在 localStorage：
-
-| 圖示 | 模式 | 行為 |
-|------|------|------|
-| 🔁 | 自動續播（預設） | 清單**依序**；推薦頁**隨機**（千首榜單依序播會永遠繞在前幾首） |
-| 🔂 | 單曲循環 | 用 `audio` 原生 `loop`，重播不必重新解析音源，沒有可聽出來的空隙 |
-| ➡️ | 播完即停 | — |
-
-自動續播撞到播不出來的歌會跳過它繼續，連續失敗 8 首才收手。使用者自己點的那首
-失敗時仍會彈窗告知 —— 那是他明確選的，不該默默跳走。
-
-## 手機背景播放
-
-播放器用**兩個 audio 元素輪替**：下一首在前台就先載進閒置的那一個，換歌時只對一個
-已經載好的元素呼叫 `play()`，不動 `src`、不碰網路。在背景換 `src` 會讓音訊工作階段
-失效，那正是「鎖屏播到一半就沒聲音」的成因。
-
-同時註冊 MediaSession，鎖定畫面／通知欄／耳機按鈕都能控制。
-
-平台差異（實測）：
-
-- **Android** 建議「加到主畫面」裝成應用。部分國產 ROM 只給已安裝的應用完整的鎖屏
-  媒體控制待遇；鎖屏看不到控制項時，先檢查該 ROM 的鎖屏通知顯示設定與瀏覽器的
-  後台活動權限 —— 那些是系統設定，網頁沒有 API 可以覆寫。
-- **iOS 建議直接用 Safari**，不要用桌面應用。iOS 的獨立模式（standalone）對背景音訊
-  支援很差，鎖屏會播不下去。因此 iOS 上不會進入獨立模式，「加到主畫面」只會是一個
-  開 Safari 的捷徑。
-
-MediaSession 需要 secure context，所以純 HTTP 的部署（例如沒配憑證的 VPS）不會有
-鎖屏控制。
-
-## 介面
-
-預設是蘋果平面風的深色 UI（大標題、分段控制、毛玻璃底欄、單一強調色）。
-舊版的藍色漸層介面仍在 `packages/web/src/ui/ClassicUI.tsx`，沒有切換按鈕，
-需要時可設 `localStorage.setItem('musicfree-ui', 'classic')` 切回去。
-
-兩套 UI 共用同一份 `useMusicApp()` hook，換皮不必動任何音源或播放邏輯。
-
-「設置」頁底部顯示前端與後端各自的建置戳記。兩者應一致 —— 不一致代表只部署了
-一半（例如前端上去了但後端沒有），而不是快取問題。
-
-## 快速開始
-
-### 部署
-
-| | **Cloudflare Pages** | **VPS / 自建** |
-|---|---|---|
-| 費用 | 免費 | 一臺 VPS |
-| 功能 | 完整 | 完整（純 HTTP 時沒有鎖屏控制） |
-| 配對碼儲存 | KV binding | 檔案系統 |
-| 上游快取 | 只在單一 isolate 內 | 全站共用 |
-
-```bash
-pnpm install
-pnpm deploy:cf      # 部署到 Cloudflare Pages
-```
-
-不想裝任何工具的話，[Releases](../../releases) 有現成的 zip，直接拖進 Cloudflare
-儀表板就能部署。自己產一份：
-
-```bash
-pnpm build:zip      # → dist-cf/musicweb-cf.zip
-```
-
-詳細步驟見 [DEPLOY.md](DEPLOY.md)。
-
-### 本地開發
-
-```bash
-pnpm install
-pnpm dev            # 前端 dev server（API 需另外跑自架後端）
-pnpm build          # 編譯前端
-pnpm build:cf       # 前端 + _worker.js（不含音源），戳記只算一次傳給兩邊
-pnpm typecheck
-```
-
-自架後端（同時服務前端與 API）：
-
-```bash
-node packages/web/scripts/server.mjs      # 預設 :8788
-```
-
-## 專案結構
+## 🏗️ 技術架構
 
 ```
-musicweb/
-│   └── whymusic.js
+whymusic/
 ├── packages/
-│   ├── core/                      # 播放器 + 插件管理器（型別與沙箱）
 │   └── web/
 │       ├── src/
-│       │   ├── musicApp.ts        # 所有狀態與行為（兩套 UI 共用）
-│       │   ├── App.tsx            # 外殼：取狀態、決定套哪張皮
-│       │   ├── main.tsx           # 掛載 + service worker 註冊策略
-│       │   ├── ui/AppleUI.tsx     # 預設介面
-│       │   ├── ui/ClassicUI.tsx   # 舊介面（保留）
-│       │   └── core/              # Player（雙元素）/ PluginManager / 插件沙箱
-│       ├── shared/sync.js         # 配對碼規則（兩個後端共用）
-│       ├── worker/                # Cloudflare 版後端
-│       │   ├── index.js           # 路由（打包成 dist/_worker.js）
-│       │   └── why.js             # 音源邏輯（後端側，插件的備援路徑）
-│       ├── scripts/server.mjs     # 自架後端（Node，零外部依賴）
-│       ├── public/                # logo / favicon / manifest / sw.js
-│       └── wrangler.toml          # Pages 設定與 KV binding
-├── scripts/
-│   ├── build-cf.mjs               # 完整建置（戳記只算一次傳給前端與 worker）
-│   ├── build-stamp.mjs            # 建置戳記
-│   ├── build-worker.mjs           # 打包 worker → dist/_worker.js
-│   └── build-cf-zip.mjs           # 產出可拖拉上傳的 zip
-├── .env.example
-└── DEPLOY.md
+│       │   ├── musicApp.ts        # 全域狀態機與核心播放邏輯
+│       │   ├── App.tsx            # 主外殼與響應式介面路由
+│       │   ├── ui/AppleUI.tsx     # 預設 Apple 現代磨砂深色介面
+│       │   └── core/              # DualPlayer 播放器 / PluginManager 插件沙箱
+│       ├── worker/                # Cloudflare Pages Functions 後端
+│       │   └── index.js           # 路由分發與跨域代理 (/api/proxy)
+│       ├── scripts/server.mjs     # 私有 VPS 專用 Node.js 伺服器 (零外部依賴)
+│       └── wrangler.toml          # Cloudflare Pages 與 KV Binding 配置
+├── scripts/                       # 跨端構建與打包自動化腳本
+├── capacitor.config.json          # Android 原生容器設定
+└── DEPLOY.md                      # 完整部署指南
 ```
 
-## 技術棧
+### 技術棧一覽
 
-| 層 | 技術 |
-|----|------|
-| 前端 | React 18 + TypeScript + Tailwind CSS |
-| 核心 | 自製插件系統（PluginManager + 雙元素 Player + `new Function` 沙箱） |
-| CF 後端 | Cloudflare Workers（單一 `_worker.js`，esbuild 打包）+ KV |
-| 自架後端 | Node.js（零外部依賴，只用內建模組） |
+| 維度 | 選型 | 特性 |
+| :--- | :--- | :--- |
+| **前端應用** | React 18 + TypeScript + Vite | 毫秒級極速渲染、嚴格型別校驗 |
+| **樣式架構** | Tailwind CSS + Lucide Icons | 現代深色主題、流暢毛玻璃質感、全螢幕自適應 |
+| **微伺服器** | Cloudflare Pages / Workers | 全球 Anycast CDN 低延遲分發、完全免費部署 |
+| **私有部署** | Node.js 原生服務器 | 零外部 npm 生產依賴，單檔啟動 |
+| **跨端支援** | PWA + Capacitor (Android) | 支援加到主畫面與原生 APK 打包 |
 
-## License
+---
 
-MIT
+## 🚀 快速開始
+
+### 部署途徑一：Cloudflare Pages（推薦，完全免費）
+
+1. **安裝依賴並登入**：
+   ```bash
+   npm install -g pnpm wrangler
+   git clone https://github.com/whypuss/whymusic.git
+   cd whymusic
+   pnpm install
+   wrangler login
+   ```
+
+2. **一鍵構建並部署**：
+   ```bash
+   pnpm deploy:cf
+   ```
+
+> 💡 **免工具直接上傳**：至專案 [Releases](../../releases) 下載現成的 `musicweb-cf.zip`，在 Cloudflare Pages 儀表板拖拉上傳即可。
+
+### 部署途徑二：Linux VPS / Docker 私有化自建
+
+```bash
+# 啟動自託管原生服務（同時服務前端靜態頁與 /api 代理，預設端口 8788）
+node packages/web/scripts/server.mjs
+```
+
+完整部署環境（含 Nginx 反向代理、Systemd 服務註冊與 WebDAV 配置）請參閱 [DEPLOY.md](DEPLOY.md)。
+
+---
+
+## 🧩 音源插件規範
+
+本播放器出廠不隨附音源。使用者部署後，需至 **「設置」** 介面黏貼相容的 CommonJS 音源插件網址。插件核心介面定義如下：
+
+```javascript
+module.exports = {
+  platform: "自訂音源名稱",
+  version: "1.0.0",
+  // 1. 搜尋能力
+  async search(query, page, type) {
+    // 返回 { isEnd: boolean, data: TrackItem[] }
+  },
+  // 2. 獲取音訊串流網址
+  async getMediaSource(musicItem, quality) {
+    // 返回 { url: "https://..." }
+  },
+  // 3. 獲取歌詞與封面 (可選)
+  async getLyric(musicItem) { /* 返回 { rawLrc: string } */ },
+  async getMusicArtwork(musicItem) { /* 返回 { artwork: string } */ }
+};
+```
+
+---
+
+## 📱 移動端使用建議
+
+- **iOS 用戶**：強烈建議直接使用 **Safari** 瀏覽器聆聽，點擊分享按鈕「加入主畫面」作為快捷方式。請勿開啟獨立全螢幕 standalone 模式（iOS 系統對 standalone 模式後台音訊保活限制極為嚴格）。
+- **Android 用戶**：建議在 Chrome / Edge 中點擊「安裝應用程式」或「加到主畫面」為 PWA 獨立應用，並確保授予該應用「允許後台活動」與「鎖定螢幕通知」權限。
+
+---
+
+## 📄 開源授權
+
+本專案依據 [MIT License](LICENSE) 條款開源發布。  
+由 [@whypuss](https://github.com/whypuss) 獨立構思、架構設計並維護。
